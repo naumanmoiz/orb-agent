@@ -90,6 +90,13 @@ agent_bin:
 test:
 	@go test -race ./...
 
+# The IPAM extension lives in the network-discovery module, which is not part of
+# the agent module's ./... . This target runs just that module's tests, which is
+# what most edits to the extension need; `make test-all` runs every backend.
+.PHONY: test-network-discovery
+test-network-discovery:
+	@$(MAKE) -C orb-discovery/network-discovery test
+
 .PHONY: test-timed
 test-timed:
 	@echo "Running tests with timing measurement..."
