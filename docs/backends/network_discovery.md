@@ -5,8 +5,16 @@ The network discovery backend leverages [NMAP](https://nmap.org/) to scan networ
 The network discovery backend uses [Diode Go SDK](https://github.com/netboxlabs/diode-sdk-go) to ingest the following entities:
 
 * [IP Address](https://github.com/netboxlabs/diode-sdk-go/blob/develop/docs/examples/ip_address/main.go)
+* Prefix and VLAN, when the policy declares a `scope.subnet_map`
 
 IP addresses support VRF, Tenant, Role, Description, Comments and Tags via `defaults`.
+
+Declaring a `scope.subnet_map` additionally emits a Prefix per mapped subnet, and
+a VLAN where one is declared, and lets discovered addresses take the mask of the
+prefix they fall in. See
+[docs/IPAM_EXTENSION.md](../IPAM_EXTENSION.md) for the full reference and the
+NetBox prerequisites. Without a `subnet_map` the backend emits IP addresses
+alone, as it always has.
 
 The name a reverse lookup returns for an address becomes the IP's `dns_name`,
 lowercased. NetBox accepts only letters, digits, hyphens and underscores in a
@@ -58,6 +66,7 @@ Config defines data for the whole scope and is optional overall.
 | schedule | cron format | no  |  If defined, it will execute scope following cron schedule time. If not defined, it will execute scope only once  |
 | defaults | map | no  |  key value pair that defines default values  |
 | timeout | int | no | Timeout in minutes for the nmap scan operation. The default value is 5 minutes.
+| custom_fields | map | no | NetBox custom field values applied to every emitted IP address and prefix. The definitions must already exist in NetBox. See [docs/IPAM_EXTENSION.md](../IPAM_EXTENSION.md). |
 
 #### Defaults
 Current supported defaults:
@@ -72,6 +81,9 @@ Current supported defaults:
 | description | str | NetBox Description data to be added to discovered IP |
 | tags | list | NetBox Tags to be added to discovered IP |
 | network_mask | int | Default network mask to be applied to IPv4 (default: 32) |
+| site | str | Site name applied to VLANs and to the default VLAN group scope. Prefixes carry their site through the tenant, so this is not applied to them. |
+| prefix | map | Defaults for the prefixes declared in `scope.subnet_map`: `status`, `role`, `tenant`, `is_pool`, `mark_utilized`, `tags`, `description`. An unset key is left off the entity rather than defaulted. |
+| vlan | map | Defaults for the VLANs declared in `scope.subnet_map`: `group`, `status`, `role`, `tenant`, `tags`, `description`. |
 
 ### Scope
 The scope defines a list of targets to be scanned.
@@ -94,6 +106,7 @@ The scope defines a list of targets to be scanned.
 | icmp_timestamp | bool | no | Enables ICMP Timestamp discovery (-PP). Uses ICMP Timestamp Requests to discover hosts that respond to this type of probe. |
 | icmp_netmask   | bool | no | Enables ICMP Netmask discovery (-PM). Sends ICMP Address Mask Request packets to identify responsive hosts. |
 | skip_host      | bool | no | Enables skip host discovery (-Pn). This option skips the host discovery stage altogether. |
+| subnet_map | list | no | Maps scanned subnets onto NetBox prefixes and VLANs. Each entry emits one Prefix, plus one VLAN where `vlan.vid` is declared, and a discovered address takes the mask, role and custom fields of the most specific entry containing it. Addresses matching no entry are emitted exactly as before. See [docs/IPAM_EXTENSION.md](../IPAM_EXTENSION.md). |
 
 ### Sample
 A sample policy including all parameters supported by the network discovery backend.
