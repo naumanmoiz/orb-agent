@@ -27,7 +27,6 @@ policies:
       defaults:
         vrf: LAB-AUS-01
         tenant: LAB-AUS-01
-        role: host
         description: "Discovered by orb network_discovery"
         tags: [orb, network-discovery]
         site: LAB-AUS-01

@@ -35,7 +35,12 @@ orb:
             # Existing keys, unchanged in meaning and position.
             vrf: LAB-AUS-01
             tenant: LAB-AUS-01
-            role: host
+            # defaults.role is the IPAddress role, which NetBox models as a
+            # fixed choice, not as an ipam.Role object. Valid values are
+            # loopback, secondary, anycast, vip, vrrp, hsrp, glbp, carp.
+            # "host" is not one of them, so this is left unset: an IP with no
+            # role is normal, and a bad value is rejected on ingest.
+            # role: loopback
             description: "Discovered by orb network_discovery"
             tags: [orb, network-discovery]
             # New: optional. Reaches VLAN.site and the VLAN group scope. A
