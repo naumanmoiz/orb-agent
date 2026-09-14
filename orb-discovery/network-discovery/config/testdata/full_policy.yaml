@@ -1,0 +1,52 @@
+policies:
+  lab_scan:
+    config:
+      schedule: 0 */4 * * *
+      timeout: 10
+      defaults:
+        vrf: LAB-AUS-01
+        tenant: LAB-AUS-01
+        description: Discovered by orb network_discovery
+        tags:
+        - orb
+        - network-discovery
+        site: LAB-AUS-01
+        prefix:
+          status: active
+          role: lab-data
+          is_pool: false
+          mark_utilized: false
+        vlan:
+          status: active
+          group: LAB-AUS-01-VLANS
+      custom_fields:
+        discovery_agent: ${AGENT_NAME}
+        discovery_policy: ${POLICY_NAME}
+        discovery_last_seen: ${SCAN_TIMESTAMP}
+        discovery_source: network_discovery
+    scope:
+      targets:
+      - 10.10.0.0/16
+      subnet_map:
+      - prefix: 10.10.0.0/16
+        status: container
+        role: lab-aggregate
+        description: LAB-AUS-01 lab space
+      - prefix: 10.10.20.0/24
+        description: Lab server VLAN
+        role: lab-servers
+        vlan:
+          vid: 20
+          name: SERVERS
+      - prefix: 10.10.20.128/25
+        role: lab-servers-gpu
+        vlan:
+          vid: 21
+          name: SERVERS-GPU
+      - prefix: 10.10.30.0/24
+        role: lab-mgmt
+        vlan:
+          vid: 30
+          name: MGMT
+        custom_fields:
+          discovery_zone: management
