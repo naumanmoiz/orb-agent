@@ -420,3 +420,6 @@ func TestMatchedAddressCarriesEntryCustomFields(t *testing.T) {
 	assert.Equal(t, diode.CustomFieldValueText("management"), ip.CustomFields["discovery_zone"].Value)
 	assert.Equal(t, diode.CustomFieldValueText("network_discovery"), ip.CustomFields["discovery_source"].Value)
 }
+
+// parseIPForTest keeps the dry-run walkthrough readable.
+func parseIPForTest(addr string) net.IP { return net.ParseIP(addr) }

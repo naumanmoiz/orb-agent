@@ -1,0 +1,94 @@
+# Sample orb-agent configuration exercising every network_discovery IPAM key.
+#
+# Replace before running:
+#   <DIODE_HOST>   your Diode server address
+#   LAB-AUS-01     your real site / tenant / VRF identifier
+#
+# Secrets come from the environment, never from this file:
+#   export DIODE_CLIENT_ID=...
+#   export DIODE_CLIENT_SECRET=...
+#
+# Dry run (writes JSON instead of ingesting, needs no Diode and no credentials):
+#   docker run --rm --net=host -u root -v ${PWD}:/opt/orb \
+#     netboxlabs/orb-agent:latest run -c /opt/orb/agent.example.yaml
+orb:
+  config_manager:
+    active: local
+  backends:
+    common:
+      diode:
+        target: grpc://<DIODE_HOST>:8080/diode
+        client_id: ${DIODE_CLIENT_ID}
+        client_secret: ${DIODE_CLIENT_SECRET}
+        agent_name: lab-agent-01
+        # Flip dry_run to false and remove dry_run_output_dir to ingest for real.
+        dry_run: true
+        dry_run_output_dir: /opt/orb/dry-run
+    network_discovery: {}
+  policies:
+    network_discovery:
+      lab_scan:
+        config:
+          schedule: "0 */4 * * *"
+          timeout: 10
+          defaults:
+            # Existing keys, unchanged in meaning and position.
+            vrf: LAB-AUS-01
+            tenant: LAB-AUS-01
+            role: host
+            description: "Discovered by orb network_discovery"
+            tags: [orb, network-discovery]
+            # New: optional. Reaches VLAN.site and the VLAN group scope. A
+            # prefix carries its site through the tenant, not through a scope.
+            site: LAB-AUS-01
+            # New: optional. Applied to the prefixes declared in subnet_map.
+            # An omitted field is left off the entity entirely, so Diode does
+            # not include it in the changeset and NetBox keeps its own value.
+            prefix:
+              status: active
+              role: lab-data
+              is_pool: false
+              mark_utilized: false
+            # New: optional. Applied to the VLANs declared in subnet_map.
+            # group also takes the mapping form:
+            #   group: {name: LAB-AUS-01-VLANS, scope_site: OTHER-SITE}
+            vlan:
+              status: active
+              group: LAB-AUS-01-VLANS
+          # New: optional. Applied to every IPAddress and Prefix this policy
+          # emits. Keys are NetBox custom field names (snake_case, the name and
+          # not the label) and the definitions must already exist in NetBox:
+          # run tools/netbox-bootstrap/bootstrap_ipam.py first.
+          custom_fields:
+            discovery_agent: "${AGENT_NAME}"
+            discovery_policy: "${POLICY_NAME}"
+            discovery_last_seen: "${SCAN_TIMESTAMP}"
+            discovery_source: network_discovery
+        scope:
+          # Existing key: what nmap actually scans.
+          targets:
+            - 10.10.0.0/16
+          # New: optional. The only source of prefix and VLAN mapping. Nothing
+          # is looked up in NetBox and nothing is inferred. Entries may nest;
+          # NetBox derives the hierarchy from containment within the VRF.
+          subnet_map:
+            # Parent container, no VLAN.
+            - prefix: 10.10.0.0/16
+              status: container
+              role: lab-aggregate
+              description: "LAB-AUS-01 lab space"
+            # Child of the /16.
+            - prefix: 10.10.20.0/24
+              description: "Lab server VLAN"
+              role: lab-servers
+              vlan: {vid: 20, name: SERVERS}
+            # Grandchild carved out of the /24. 10.10.20.200 maps here, not to
+            # the /24 or the /16, and is emitted as 10.10.20.200/25.
+            - prefix: 10.10.20.128/25
+              role: lab-servers-gpu
+              vlan: {vid: 21, name: SERVERS-GPU}
+            - prefix: 10.10.30.0/24
+              role: lab-mgmt
+              vlan: {vid: 30, name: MGMT}
+              custom_fields:
+                discovery_zone: management
