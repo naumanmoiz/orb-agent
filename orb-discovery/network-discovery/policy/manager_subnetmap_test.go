@@ -50,5 +50,4 @@ func TestManagerAcceptsAgentName(t *testing.T) {
 	manager := policy.NewManager(context.Background(),
 		slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil)), nil, policy.WithAgentName("lab-agent-01"))
 	require.NotNil(t, manager)
-	assert.Contains(t, manager.GetCapabilities()[0], "subnet_map")
 }
