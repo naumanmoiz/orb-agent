@@ -47,6 +47,8 @@ type Runner struct {
 	scope     config.Scope
 	config    config.PolicyConfig
 	targets   []targetInfo
+	matcher   *subnetMatcher
+	agentName string
 	runStore  *RunStore
 }
 
@@ -73,6 +75,13 @@ func (r *Runner) getIPWithMask(ipStr string, defaultMask string) string {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		return ipStr + defaultMask
+	}
+
+	// A subnet_map match is more specific than any target: the map states what
+	// the prefix actually is, while a target only states what was scanned. With
+	// no match the target-mask behaviour below is unchanged.
+	if entry := r.matcher.match(ip); entry != nil {
+		return ipStr + fmt.Sprintf("/%d", entry.MaskBits())
 	}
 
 	var bestTarget *targetInfo
@@ -125,6 +134,7 @@ func NewRunner(ctx context.Context, logger *slog.Logger, name string, policy con
 	runner.config = policy.Config
 
 	runner.targets = parseTargets(policy.Scope.Targets)
+	runner.matcher = newSubnetMatcher(policy.Scope.SubnetMap)
 
 	return runner, nil
 }
@@ -321,15 +331,29 @@ func (r *Runner) run() {
 			))
 	}
 
-	entities := make([]diode.Entity, 0, len(result.Hosts))
+	// Resolve the custom field values once for the whole run so every entity
+	// carries the same ${SCAN_TIMESTAMP}, then emit the declared prefixes and
+	// VLANs ahead of the discovered addresses.
+	customFields := resolveRunCustomFields(r.config, r.scope.SubnetMap,
+		scanTokens(r.agentName, policyName, startTime), r.logger)
+	ipam := r.ipamEntities(customFields, policyName)
+
+	entities := make([]diode.Entity, 0, len(ipam)+len(result.Hosts))
+	entities = append(entities, ipam...)
+
 	if len(result.Hosts) == 0 {
 		r.logger.Warn("discovery complete: no hosts found", "targets", r.scope.Targets,
 			"policy", policyName)
-		// Update run status to completed even if no hosts found
-		r.runStore.UpdateRun(policyName, run.ID, RunStatusCompleted, nil, 0)
-		return
+		if len(entities) == 0 {
+			// Update run status to completed even if no hosts found
+			r.runStore.UpdateRun(policyName, run.ID, RunStatusCompleted, nil, 0)
+			return
+		}
+		// subnet_map declares IPAM independently of what answered the scan, so
+		// the prefixes and VLANs are still worth ingesting.
+	} else {
+		r.logger.Info("discovery complete", "hosts_found", len(result.Hosts), "policy", policyName)
 	}
-	r.logger.Info("discovery complete", "hosts_found", len(result.Hosts), "policy", policyName)
 
 	// Track discovered hosts
 	processedEntries := make(map[string]bool)
@@ -361,7 +385,8 @@ func (r *Runner) run() {
 		}
 		processedEntries[addr] = true
 
-		ip, outcome := r.ipAddressEntity(host, ipAddr, addr, policyName)
+		matched := r.matcher.match(net.ParseIP(addr))
+		ip, outcome := r.ipAddressEntity(host, ipAddr, addr, policyName, customFields.forEntry(matched))
 		switch outcome {
 		case hostnameReplaced:
 			replacedHostnames++
@@ -394,6 +419,24 @@ func (r *Runner) run() {
 	}
 }
 
+// ipamEntities builds the Prefix and VLAN entities declared by scope.subnet_map,
+// deduped so each is sent once per run. Returns nil when no subnet_map is
+// configured, which is what keeps an upstream policy emitting addresses alone.
+func (r *Runner) ipamEntities(customFields runCustomFields, policyName string) []diode.Entity {
+	if len(r.scope.SubnetMap) == 0 {
+		return nil
+	}
+	builder := newIPAMBuilder(r.config.Defaults, r.logger, policyName)
+	for i := range r.scope.SubnetMap {
+		entry := &r.scope.SubnetMap[i]
+		builder.add(entry, customFields.forEntry(entry))
+	}
+	entities := builder.entities()
+	r.logger.Info("emitting IPAM entities declared by subnet_map",
+		"entity_count", len(entities), "subnet_map_entries", len(r.scope.SubnetMap), "policy", policyName)
+	return entities
+}
+
 // Start starts the policy runner
 func (r *Runner) Start() {
 	if rMetric := metrics.GetActivePolicies(); rMetric != nil {
@@ -414,9 +457,18 @@ func (r *Runner) Stop() error {
 }
 
 // ipAddressEntity builds the IP address entity for one scanned host.
-func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr, policyName string) (*diode.IPAddress, hostnameOutcome) {
+func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr, policyName string,
+	customFields map[string]any,
+) (*diode.IPAddress, hostnameOutcome) {
 	ip := &diode.IPAddress{
 		Address: diode.String(ipAddr),
+	}
+	for key, value := range customFields {
+		if err := ip.SetCustomField(key, value); err != nil {
+			// One bad value should not cost the whole address.
+			r.logger.Error("skipping custom field on ip address", "error", err,
+				"custom_field", key, "ip_address", ipAddr, "policy", policyName)
+		}
 	}
 	if r.config.Defaults.Description != "" {
 		ip.Description = diode.String(r.config.Defaults.Description)

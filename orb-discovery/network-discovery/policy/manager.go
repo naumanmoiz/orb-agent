@@ -14,22 +14,37 @@ import (
 
 // Manager represents the policy manager
 type Manager struct {
-	policies map[string]*Runner
-	client   diode.Client
-	logger   *slog.Logger
-	ctx      context.Context
-	runStore *RunStore
+	policies  map[string]*Runner
+	client    diode.Client
+	logger    *slog.Logger
+	ctx       context.Context
+	agentName string
+	runStore  *RunStore
+}
+
+// ManagerOption configures a Manager at construction.
+type ManagerOption func(*Manager)
+
+// WithAgentName sets the agent name that ${AGENT_NAME} resolves to in a policy's
+// custom_fields block. It is the same value the agent passes as
+// --diode-app-name-prefix.
+func WithAgentName(name string) ManagerOption {
+	return func(m *Manager) { m.agentName = name }
 }
 
 // NewManager returns a new policy manager
-func NewManager(ctx context.Context, logger *slog.Logger, client diode.Client) *Manager {
-	return &Manager{
+func NewManager(ctx context.Context, logger *slog.Logger, client diode.Client, opts ...ManagerOption) *Manager {
+	m := &Manager{
 		ctx:      ctx,
 		client:   client,
 		logger:   logger,
 		policies: make(map[string]*Runner),
 		runStore: NewRunStore(),
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
 }
 
 // ParsePolicies parses the policies from the request
@@ -54,16 +69,27 @@ func (m *Manager) HasPolicy(name string) bool {
 }
 
 // StartPolicy starts the policy
+//
+// A subnet_map that does not validate fails this policy alone: the error is
+// returned to the caller, which reports it and leaves every other policy and the
+// agent itself running.
 func (m *Manager) StartPolicy(name string, policy config.Policy) error {
 	if len(policy.Scope.Targets) == 0 {
 		return fmt.Errorf("%s : no targets found in the policy", name)
 	}
+
+	if err := config.ValidateSubnetMap(policy.Scope.SubnetMap, m.logger); err != nil {
+		m.logger.Error("policy rejected: invalid subnet_map", "error", err, "policy", name)
+		return fmt.Errorf("%s : %w", name, err)
+	}
+	config.WarnSubnetMapCoverage(policy.Scope.SubnetMap, policy.Scope.Targets, m.logger)
 
 	if !m.HasPolicy(name) {
 		r, err := NewRunner(m.ctx, m.logger, name, policy, m.client, m.runStore)
 		if err != nil {
 			return err
 		}
+		r.agentName = m.agentName
 
 		r.Start()
 		m.policies[name] = r
@@ -94,7 +120,7 @@ func (m *Manager) Stop() error {
 
 // GetCapabilities returns the capabilities of network-discovery
 func (m *Manager) GetCapabilities() []string {
-	return []string{"targets, ports, exclude_ports, timing, fast_mode, ping_scan, top_ports, scan_types, max_retries"}
+	return []string{"targets, ports, exclude_ports, timing, fast_mode, ping_scan, top_ports, scan_types, max_retries, subnet_map"}
 }
 
 // Status represents the status of a policy with its runs

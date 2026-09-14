@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -122,6 +123,11 @@ func resolveCustomFieldString(value string, tokens CustomFieldTokens) (any, erro
 	}
 	switch name {
 	case TokenAgentName:
+		if tokens.AgentName == "" {
+			// A blank identity field is worse than a loud failure: it looks
+			// populated in NetBox but identifies nothing.
+			return nil, errors.New("${AGENT_NAME} is empty; set diode.agent_name in the agent config")
+		}
 		return tokens.AgentName, nil
 	case TokenPolicyName:
 		return tokens.PolicyName, nil

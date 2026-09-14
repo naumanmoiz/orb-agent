@@ -7,7 +7,7 @@ import (
 )
 
 // annotateEntitiesWithRunID sets per-entity Diode metadata key "run_id" on each entity
-// in the batch and on nested Device, Interface, and IPAddress references.
+// in the batch and on nested Device, Interface, IPAddress, Prefix, and VLAN references.
 func annotateEntitiesWithRunID(entities []diode.Entity, runID string) {
 	seen := make(map[unsafe.Pointer]struct{})
 	for _, e := range entities {
@@ -18,8 +18,41 @@ func annotateEntitiesWithRunID(entities []diode.Entity, runID string) {
 			annotateInterface(v, runID, seen)
 		case *diode.IPAddress:
 			annotateIPAddress(v, runID, seen)
+		case *diode.Prefix:
+			annotatePrefix(v, runID, seen)
+		case *diode.VLAN:
+			annotateVLAN(v, runID, seen)
 		}
 	}
+}
+
+// annotatePrefix annotates a prefix and the VLAN it references. The same VLAN
+// pointer is also emitted as a top-level entity, which is why the seen set
+// matters here: without it the shared VLAN would be visited twice.
+func annotatePrefix(p *diode.Prefix, runID string, seen map[unsafe.Pointer]struct{}) {
+	if p == nil {
+		return
+	}
+	ptr := unsafe.Pointer(p)
+	if _, ok := seen[ptr]; ok {
+		return
+	}
+	seen[ptr] = struct{}{}
+	mergeRunID(&p.Metadata, runID)
+	annotateVLAN(p.Vlan, runID, seen)
+}
+
+func annotateVLAN(v *diode.VLAN, runID string, seen map[unsafe.Pointer]struct{}) {
+	if v == nil {
+		return
+	}
+	ptr := unsafe.Pointer(v)
+	if _, ok := seen[ptr]; ok {
+		return
+	}
+	seen[ptr] = struct{}{}
+	mergeRunID(&v.Metadata, runID)
+	annotateVLAN(v.QinqSvlan, runID, seen)
 }
 
 func mergeRunID(md *diode.Metadata, runID string) {
