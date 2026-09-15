@@ -423,6 +423,45 @@ def check_vrfs(nb: "NetBox", configured: dict[str, dict[str, str]]) -> None:
             print(f"        {extra}")
 
 
+def check_tenants(nb: "NetBox", configured: dict[str, str]) -> None:
+    """Verify every tenant a policy names, and report the group it needs.
+
+    NetBox makes Tenant unique on (group, name) with nulls_distinct=False, which
+    the plugin turns into a matcher where an absent group means "group IS NULL"
+    rather than "any group". A group-less reference cannot find a tenant that
+    sits in a group, so Diode creates a second tenant of the same name outside
+    it and hangs the objects off that. Same failure as the VRF, one level down,
+    and just as silent.
+    """
+    if not configured:
+        return
+    print("\ntenants (verified, never created):")
+    for name in sorted(configured):
+        want_group = configured[name] or ""
+        existing = nb.find("/api/tenancy/tenants/", name=name)
+        if not existing:
+            problem = (f"tenant {name!r} does not exist. Diode would create one rather than match "
+                       "a prebuilt tenant. Create it in NetBox, or fix defaults.tenant.")
+            nb.problems.append(problem)
+            print(f"  ! MISSING {problem}")
+            continue
+        actual_group = (existing.get("group") or {}).get("name", "") or ""
+        if actual_group == want_group:
+            shape = f"group {actual_group}" if actual_group else "no group"
+            print(f"  ok       tenant {name} (id={existing['id']}), matched on name within {shape}")
+            continue
+        problem = f"tenant {name} exists (id={existing['id']}) but the policy will not match it."
+        nb.problems.append(problem)
+        print(f"  ! MISMATCH {problem}")
+        print(f"            NetBox has: group={actual_group or 'null'}")
+        print(f"            policy has: tenant_group={want_group or 'unset'}")
+        print("            Diode would create a SECOND tenant with this name. Set in defaults:")
+        if actual_group:
+            print(f'              tenant_group: "{actual_group}"')
+        else:
+            print("              (remove tenant_group; this tenant has none)")
+
+
 def check_roles(nb: "NetBox", names: set[str]) -> None:
     """Create the ipam.Role objects a subnet_map names."""
     if not names:
@@ -471,7 +510,7 @@ def _value_hint(netbox_type: str) -> str:
     return hints.get(netbox_type, "")
 
 
-def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], dict[str, dict[str, str]], set[str]]:
+def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], dict[str, dict[str, str]], dict[str, str], set[str]]:
     """Read the custom field names a config names, with the type each will carry.
 
     Reads both the agent-level shape (orb.policies.network_discovery.<name>) and
@@ -494,12 +533,22 @@ def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], dict
     custom_fields = dict(BASE_CUSTOM_FIELDS)
     values: dict[str, Any] = {}
     vrfs: dict[str, dict[str, str]] = {}
+    tenants: dict[str, str] = {}
     roles: set[str] = set()
     conflicts: dict[str, set[str]] = {}
     for policy in policies.values():
         config = (policy or {}).get("config") or {}
         scope = (policy or {}).get("scope") or {}
         defaults = config.get("defaults") or {}
+        group = defaults.get("tenant_group", "") or ""
+        for key in ("tenant", "vrf_tenant"):
+            if defaults.get(key):
+                tenants[defaults[key]] = group
+        for entry in scope.get("subnet_map") or []:
+            if entry.get("tenant"):
+                tenants[entry["tenant"]] = group
+        if (defaults.get("prefix") or {}).get("tenant"):
+            tenants[defaults["prefix"]["tenant"]] = group
         if defaults.get("vrf"):
             vrfs[defaults["vrf"]] = {
                 "rd": defaults.get("rd", "") or "",
@@ -528,7 +577,7 @@ def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], dict
     for name, types in conflicts.items():
         print(f"  ! policies disagree on custom field {name}: {', '.join(sorted(types))}. "
               "One NetBox field cannot be both.", file=sys.stderr)
-    return custom_fields, values, vrfs, roles
+    return custom_fields, values, vrfs, tenants, roles
 
 
 def main() -> int:
@@ -552,9 +601,10 @@ def main() -> int:
 
     expected_values: dict[str, Any] = {}
     vrfs: dict[str, dict[str, str]] = {}
+    tenants: dict[str, str] = {}
     roles: set[str] = set()
     if args.config:
-        custom_fields, expected_values, vrfs, roles = collect_from_config(args.config)
+        custom_fields, expected_values, vrfs, tenants, roles = collect_from_config(args.config)
     else:
         custom_fields = dict(BASE_CUSTOM_FIELDS)
 
@@ -577,6 +627,7 @@ def main() -> int:
         ensure_custom_field(nb, name, custom_fields[name])
 
     check_vrfs(nb, vrfs)
+    check_tenants(nb, tenants)
     check_roles(nb, roles)
 
     if args.dry_run and nb.planned:

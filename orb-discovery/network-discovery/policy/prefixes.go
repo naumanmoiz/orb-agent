@@ -41,11 +41,14 @@ func (b *prefixBuilder) add(entry *config.SubnetMapEntry, customFields map[strin
 	}
 
 	prefix := &diode.Prefix{Prefix: diode.String(cidr)}
-	if vrf := vrfReference(b.defaults.Vrf, b.defaults.Rd, b.defaults.VrfTenant); vrf != nil {
+	if vrf := vrfReference(b.defaults.Vrf, b.defaults.Rd, b.defaults.VrfTenant, b.defaults.TenantGroup); vrf != nil {
 		prefix.Vrf = vrf
 	}
-	if tenant := firstNonEmpty(entry.Tenant, b.defaults.Prefix.Tenant, b.defaults.Tenant); tenant != "" {
-		prefix.Tenant = &diode.Tenant{Name: diode.String(tenant)}
+	if tenant := tenantReference(
+		firstNonEmpty(entry.Tenant, b.defaults.Prefix.Tenant, b.defaults.Tenant),
+		b.defaults.TenantGroup,
+	); tenant != nil {
+		prefix.Tenant = tenant
 	}
 	if status := firstNonEmpty(entry.Status, b.defaults.Prefix.Status); status != "" {
 		prefix.Status = diode.String(status)
@@ -102,7 +105,7 @@ func (b *prefixBuilder) entities() []diode.Entity { return b.order }
 // Hence vrf_tenant, which is deliberately separate from defaults.tenant. That
 // one describes the address and the prefix; this one exists only to make the
 // reference match.
-func vrfReference(name, rd, tenant string) *diode.VRF {
+func vrfReference(name, rd, tenant, tenantGroup string) *diode.VRF {
 	if name == "" {
 		return nil
 	}
@@ -110,10 +113,31 @@ func vrfReference(name, rd, tenant string) *diode.VRF {
 	if rd != "" {
 		vrf.Rd = diode.String(rd)
 	}
-	if tenant != "" {
-		vrf.Tenant = &diode.Tenant{Name: diode.String(tenant)}
+	if t := tenantReference(tenant, tenantGroup); t != nil {
+		vrf.Tenant = t
 	}
 	return vrf
+}
+
+// tenantReference builds a Tenant the plugin can match against a prebuilt one.
+//
+// NetBox makes Tenant unique on (group, name) with nulls_distinct=False, and
+// the plugin turns that into a matcher where an absent group is not "any group"
+// but "group IS NULL". A reference without a group therefore only ever finds a
+// group-less tenant; against one that sits in a group nothing matches and Diode
+// creates a second tenant of the same name outside it.
+//
+// The same trap as the VRF reference, one level down, and it bites in the same
+// silent way: the ingest succeeds and the objects hang off the wrong tenant.
+func tenantReference(name, group string) *diode.Tenant {
+	if name == "" {
+		return nil
+	}
+	tenant := &diode.Tenant{Name: diode.String(name)}
+	if group != "" {
+		tenant.Group = &diode.TenantGroup{Name: diode.String(group)}
+	}
+	return tenant
 }
 
 // firstNonEmpty returns the first non-empty string, which is how the

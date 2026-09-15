@@ -488,13 +488,11 @@ func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr, policyName string
 		hasComments = true
 		ip.Comments = diode.String(r.config.Defaults.Comments)
 	}
-	if vrf := vrfReference(r.config.Defaults.Vrf, r.config.Defaults.Rd, r.config.Defaults.VrfTenant); vrf != nil {
+	if vrf := vrfReference(r.config.Defaults.Vrf, r.config.Defaults.Rd, r.config.Defaults.VrfTenant, r.config.Defaults.TenantGroup); vrf != nil {
 		ip.Vrf = vrf
 	}
-	if r.config.Defaults.Tenant != "" {
-		ip.Tenant = &diode.Tenant{
-			Name: diode.String(r.config.Defaults.Tenant),
-		}
+	if tenant := tenantReference(r.config.Defaults.Tenant, r.config.Defaults.TenantGroup); tenant != nil {
+		ip.Tenant = tenant
 	}
 	if r.config.Defaults.Role != "" {
 		ip.Role = diode.String(r.config.Defaults.Role)

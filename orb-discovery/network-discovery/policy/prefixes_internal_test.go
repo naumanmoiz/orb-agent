@@ -330,3 +330,40 @@ func TestDryRunPrefixGolden(t *testing.T) {
 		assert.NotContains(t, vrf, "tenant")
 	}
 }
+
+// NetBox makes Tenant unique on (group, name) with nulls_distinct=False, so the
+// plugin reads an absent group as "group IS NULL" rather than "any group". A
+// group-less reference therefore cannot find a tenant that sits in a group, and
+// Diode creates a duplicate outside it. Every tenant the agent emits has to
+// carry the group when there is one.
+func TestTenantReferenceCarriesTheGroup(t *testing.T) {
+	t.Run("group set reaches prefix, vrf and address", func(t *testing.T) {
+		defaults := config.Defaults{
+			Vrf: "VRF-Lab-312", VrfTenant: "312", Tenant: "312", TenantGroup: "Labs",
+		}
+		r := prefixRunner(t, defaults, nestedMap(t))
+		r.targets = parseTargets([]string{"192.0.2.0/24"})
+
+		prefix := r.prefixEntities(nil, "p")[0].(*diode.Prefix)
+		ip, _ := r.ipAddressEntity(scannedHost("h.example.net"), "192.0.2.10/25", "192.0.2.10", "p", nil)
+
+		for name, tenant := range map[string]*diode.Tenant{
+			"prefix.tenant": prefix.Tenant,
+			"vrf.tenant":    prefix.Vrf.Tenant,
+			"address":       ip.Tenant,
+		} {
+			require.NotNil(t, tenant, name)
+			require.NotNil(t, tenant.Group, name+" must carry the group or it matches a group-less tenant")
+			assert.Equal(t, "Labs", *tenant.Group.Name, name)
+			assert.Equal(t, "312", *tenant.Name, name)
+		}
+	})
+
+	t.Run("no group leaves the reference group-less", func(t *testing.T) {
+		r := prefixRunner(t, config.Defaults{Vrf: "V", Tenant: "312"}, nestedMap(t))
+		prefix := r.prefixEntities(nil, "p")[0].(*diode.Prefix)
+		require.NotNil(t, prefix.Tenant)
+		assert.Nil(t, prefix.Tenant.Group,
+			"inventing a group would miss a genuinely group-less tenant")
+	})
+}

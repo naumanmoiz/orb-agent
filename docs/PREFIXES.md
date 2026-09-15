@@ -42,14 +42,37 @@ matches**. Diode then creates a second, empty VRF of the same name and
 reconciles into it. That reads as success while splitting the lab's address
 space across two VRFs.
 
-Three keys control the reference:
+### The same trap applies to tenants
+
+NetBox makes `Tenant` unique on `(group, name)` with `nulls_distinct=False`. The
+plugin turns that into a matcher where an **absent group means `group IS NULL`**,
+not "any group". So a group-less tenant reference cannot find a tenant that sits
+in a tenant group, and Diode creates a second tenant of the same name outside it.
+
+`defaults.tenant_group` sets the group on every tenant reference the agent emits:
+the prefix's, the address's, and the one inside the VRF reference. The preflight
+checks it the same way:
+
+```
+tenants (verified, never created):
+  ! MISMATCH tenant 312 exists (id=3) but the policy will not match it.
+            NetBox has: group=Labs
+            policy has: tenant_group=unset
+            Diode would create a SECOND tenant with this name. Set in defaults:
+              tenant_group: "Labs"
+```
+
+Setting it when the tenant has no group is equally wrong, and is reported too.
+
+Four keys control the references:
 
 ```yaml
 defaults:
   vrf: VRF-Lab-312      # the name
   rd: "65000:9"         # only if the prebuilt VRF has an RD
   vrf_tenant: "312"     # only if the prebuilt VRF has a tenant
-  tenant: LAB-312       # unrelated: this is the prefix's and address's tenant
+  tenant: "312"         # the prefix's and address's tenant
+  tenant_group: "Labs"  # only if those tenants sit in a group
 ```
 
 `vrf_tenant` and `tenant` are deliberately separate. `tenant` describes the

@@ -47,6 +47,12 @@ orb:
             # The bootstrap script reads the real VRF and prints what to set.
             # rd: "65000:9"
             # vrf_tenant: "LAB-AUS-01"
+            # Set ONLY if the referenced tenants belong to a tenant group.
+            # NetBox makes Tenant unique on (group, name) with
+            # nulls_distinct=False, so the plugin reads an absent group as
+            # "group IS NULL" and a group-less reference cannot find a grouped
+            # tenant. Diode then creates a duplicate outside the group.
+            # tenant_group: "Labs"
             tenant: LAB-AUS-01
             description: "Discovered by orb network_discovery"
             tags: [orb, network-discovery]

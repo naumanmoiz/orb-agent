@@ -72,7 +72,14 @@ type Defaults struct {
 	// tenant. A prebuilt VRF that has a tenant is therefore invisible to a
 	// name-only reference, and Diode creates a second VRF instead of matching.
 	// Set this to the tenant your prebuilt VRF carries.
-	VrfTenant   string   `yaml:"vrf_tenant,omitempty"`
+	VrfTenant string `yaml:"vrf_tenant,omitempty"`
+	// TenantGroup is the group the referenced tenants belong to. NetBox makes
+	// Tenant unique on (group, name) with nulls_distinct=False, so the plugin
+	// treats an absent group as "group IS NULL" and looks it up that way. A
+	// prebuilt tenant that sits in a group is therefore invisible to a
+	// group-less reference, and Diode creates a second tenant of the same name
+	// outside the group. Set this to the group your tenant belongs to.
+	TenantGroup string   `yaml:"tenant_group,omitempty"`
 	Tenant      string   `yaml:"tenant,omitempty"`
 	Role        string   `yaml:"role,omitempty"`
 	Description string   `yaml:"description,omitempty"`
