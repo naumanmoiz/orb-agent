@@ -114,7 +114,7 @@ func main() {
 		logger.Info("metrics export configured", "endpoint", *otelEndpoint, "period_seconds", *otelExportPeriod)
 	}
 
-	policyManager := policy.NewManager(ctx, logger, client)
+	policyManager := policy.NewManager(ctx, logger, client, policy.WithAgentName(*diodeAppNamePrefix))
 	server := server.NewServer(*host, *port, logger, policyManager, version.GetBuildVersion())
 
 	// handle signals
