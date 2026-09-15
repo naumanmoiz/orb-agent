@@ -1,0 +1,62 @@
+# Sample orb-agent configuration for network_discovery with NetBox custom fields.
+#
+# Replace before running:
+#   <DIODE_HOST>   your Diode server address
+#   LAB-AUS-01     your real tenant / VRF identifier
+#   lab-agent-01   a name identifying this agent, used by ${AGENT_NAME}
+#
+# Secrets come from the environment, never from this file:
+#   export DIODE_CLIENT_ID=... DIODE_CLIENT_SECRET=...
+#
+# Create the custom fields in NetBox first; Diode does not create them:
+#   python3 tools/netbox-bootstrap/bootstrap_custom_fields.py \
+#     --config agent.example.yaml --dry-run
+orb:
+  config_manager:
+    active: local
+  backends:
+    common:
+      diode:
+        target: grpc://<DIODE_HOST>:8080/diode
+        client_id: ${DIODE_CLIENT_ID}
+        client_secret: ${DIODE_CLIENT_SECRET}
+        agent_name: lab-agent-01
+        # Uncomment both to write JSON locally instead of ingesting. Remove them
+        # (do not set dry_run: false and leave the dir) to go live.
+        # dry_run: true
+        # dry_run_output_dir: /opt/orb/out
+    network_discovery: {}
+  policies:
+    network_discovery:
+      lab_scan:
+        config:
+          schedule: "0 */4 * * *"
+          timeout: 10
+          # Existing keys, unchanged.
+          defaults:
+            vrf: LAB-AUS-01
+            tenant: LAB-AUS-01
+            description: "Discovered by orb network_discovery"
+            tags: [orb, network-discovery]
+          # NEW: applied to every IP address this policy emits. Keys are NetBox
+          # custom field names (snake_case, the name and not the label) and the
+          # definitions must already exist on ipam.ipaddress.
+          custom_fields:
+            discovery_agent: "${AGENT_NAME}"
+            discovery_policy: "${POLICY_NAME}"
+            discovery_last_seen: "${SCAN_TIMESTAMP}"
+            discovery_source: network_discovery
+          # NEW: how much of ${SCAN_TIMESTAMP} is kept. Default "day".
+          #
+          # This is a load control, not cosmetics. At "nanosecond" every address
+          # carries a value NetBox has never seen, so the reconciler rewrites
+          # every address on every scan and NetBox records a changelog entry for
+          # each one. At "day" an otherwise unchanged address reconciles to a
+          # no-op. Use a finer setting only if you need sub-day last-seen
+          # resolution and have measured the write volume.
+          #
+          # One of: nanosecond, second, minute, hour, day
+          timestamp_precision: day
+        scope:
+          targets:
+            - 192.0.2.0/24
