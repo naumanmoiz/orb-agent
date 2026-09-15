@@ -101,7 +101,20 @@ Read the output as a checklist:
 | `ok` | Exists, right type, attached to `ipam.ipaddress` |
 | `+ create` | Does not exist |
 | `~ update` | Exists but not attached to `ipam.ipaddress` |
-| `! WRONG` | Exists with the **wrong type**, for example `discovery_last_seen` as `text` when a datetime is sent |
+| `! WRONG` | Exists with a type that does not match what the policy will send |
+
+The expected type is inferred from the **policy value**, the same way the backend
+infers it, so the check catches both directions:
+
+```yaml
+lab_id: 312      # integer, matches an integer custom field
+lab_id: "312"    # text, rejected by an integer custom field
+```
+
+A field attached to more models than `ipam.ipaddress` is fine. The script only
+requires that `ipam.ipaddress` is among them, and an update adds it without
+removing the others, so a shared field such as `lab_id` used on devices and
+prefixes keeps working.
 
 A type mismatch is reported, never corrected: retyping a populated custom field
 is destructive, so that is your call. The script exits non-zero when any field

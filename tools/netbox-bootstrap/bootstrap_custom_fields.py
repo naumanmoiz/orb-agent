@@ -23,6 +23,7 @@ version and talking to the REST API directly makes that difference explicit.
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import os
 import sys
@@ -227,11 +228,17 @@ def ensure_custom_field(nb: NetBox, name: str, field_type: str) -> None:
 
         if actual_type != field_type:
             # This is the failure that reaches the reconciler as
-            # ERR_OPS_GENERATE_DIFF: a datetime value sent at a text field.
-            problem = (f"custom field {name} is type {actual_type}, expected {field_type}. "
-                       f"Change it in NetBox; this script will not retype a populated field.")
+            # ERR_OPS_GENERATE_DIFF. Either side can be the wrong one, so name
+            # both: the type is inferred from the policy value, so a quoted
+            # "312" against an integer field is fixed in the YAML, not in NetBox.
+            problem = (f"custom field {name}: NetBox has {actual_type}, "
+                       f"the policy will send {field_type}")
             nb.problems.append(problem)
             print(f"  ! WRONG   {problem}")
+            print(f"             Fix one of the two:")
+            print(f"               - change the custom field to {field_type} in NetBox, or")
+            print(f"               - change the policy value so it is {actual_type}"
+                  f"{_value_hint(actual_type)}")
             return
 
         if not missing:
@@ -265,8 +272,59 @@ def ensure_custom_field(nb: NetBox, name: str, field_type: str) -> None:
     print(f"  created  {label} (id={created['id']})")
 
 
+# Tokens the agent resolves itself. ${SCAN_TIMESTAMP} becomes a time.Time and
+# lands on the datetime variant; the others are strings.
+_TOKEN_TYPES = {
+    "${SCAN_TIMESTAMP}": "datetime",
+    "${AGENT_NAME}": "text",
+    "${POLICY_NAME}": "text",
+}
+
+
+def infer_field_type(value: Any) -> str:
+    """Map a policy value to the NetBox custom field type the agent will send.
+
+    This mirrors the backend's own detection, which keys off the YAML type, not
+    off the field name. Guessing "text" for everything would report an integer
+    field such as lab_id as a mismatch, and worse, would let a quoted "312" look
+    correct here and then be rejected by an integer field on ingest.
+    """
+    if isinstance(value, str):
+        if value in _TOKEN_TYPES:
+            return _TOKEN_TYPES[value]
+        # Any other ${VAR} comes from the environment, which is always a string.
+        return "text"
+    if isinstance(value, bool):
+        # Checked before int: bool is a subclass of int in Python.
+        return "boolean"
+    if isinstance(value, int):
+        return "integer"
+    if isinstance(value, float):
+        return "decimal"
+    if isinstance(value, (dict, list)):
+        return "json"
+    if isinstance(value, datetime.datetime):
+        return "datetime"
+    if isinstance(value, datetime.date):
+        return "date"
+    return "text"
+
+
+def _value_hint(netbox_type: str) -> str:
+    """A concrete YAML example for the type NetBox actually has."""
+    hints = {
+        "integer": " (unquoted, e.g. lab_id: 312)",
+        "text": ' (quoted, e.g. lab_id: "312")',
+        "boolean": " (e.g. true)",
+        "decimal": " (e.g. 1.5)",
+        "datetime": " (${SCAN_TIMESTAMP}, or an unquoted 2026-09-15T00:00:00Z)",
+        "json": " (a YAML mapping or list)",
+    }
+    return hints.get(netbox_type, "")
+
+
 def collect_from_config(path: str) -> dict[str, str]:
-    """Read the custom field names a config names.
+    """Read the custom field names a config names, with the type each will carry.
 
     Reads both the agent-level shape (orb.policies.network_discovery.<name>) and
     the backend-level shape (policies.<name>) the backend itself receives, so the
@@ -286,10 +344,20 @@ def collect_from_config(path: str) -> dict[str, str]:
     policies = policies or {}
 
     custom_fields = dict(BASE_CUSTOM_FIELDS)
+    conflicts: dict[str, set[str]] = {}
     for policy in policies.values():
         config = (policy or {}).get("config") or {}
-        for name in (config.get("custom_fields") or {}):
-            custom_fields.setdefault(name, "text")
+        for name, value in (config.get("custom_fields") or {}).items():
+            inferred = infer_field_type(value)
+            if name in custom_fields and custom_fields[name] != inferred:
+                # Two policies sending different types to one field is a real
+                # problem: whichever reconciles second is rejected.
+                conflicts.setdefault(name, {custom_fields[name]}).add(inferred)
+            custom_fields[name] = inferred
+
+    for name, types in conflicts.items():
+        print(f"  ! policies disagree on custom field {name}: {', '.join(sorted(types))}. "
+              "One NetBox field cannot be both.", file=sys.stderr)
     return custom_fields
 
 

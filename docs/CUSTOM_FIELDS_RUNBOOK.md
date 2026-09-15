@@ -139,7 +139,11 @@ Read it as a checklist:
 | `ok` | Exists, right type, on `ipam.ipaddress` |
 | `+ create` | Does not exist |
 | `~ update` | Exists but not attached to `ipam.ipaddress` |
-| `! WRONG` | Exists with the **wrong type** |
+| `! WRONG` | Exists with a type that does not match what the policy will send |
+
+The expected type comes from the policy value, not the field name, so `lab_id: 312`
+expects an integer field and `lab_id: "312"` expects a text one. The message names
+both sides and which YAML form matches, because either one can be the wrong one.
 
 **If you created the fields by hand, run this anyway.** The common mistake is
 `discovery_last_seen` created as `text`; it receives a datetime and fails
