@@ -76,9 +76,21 @@ the failure that looks like success.
 
 ### If duplicates already exist
 
-Merge them in NetBox by hand. Move any prefixes and addresses off the
-agent-created VRF onto the prebuilt one, delete the empty duplicate, then fix
-`defaults` per the preflight output so the next scan matches.
+The duplicate is recognisable by shape: same name, newer `created`, no tenant
+and no rd, and it holds the objects while the prebuilt one is empty.
+
+```bash
+python3 tools/netbox-bootstrap/merge_duplicate_vrfs.py --name VRF-Lab-312
+python3 tools/netbox-bootstrap/merge_duplicate_vrfs.py --name VRF-Lab-312 --apply
+```
+
+Dry run by default. It keeps the oldest VRF (override with `--keep <id>`), moves
+prefixes, addresses and IP ranges onto it, and deletes the duplicate only once it
+is empty. An object that already exists in the keeper is reported as a collision
+and left alone rather than merged blindly.
+
+It prints the `defaults` change needed at the end. **Fix that before the next
+scan** or the duplicate is recreated.
 
 ## Config
 
