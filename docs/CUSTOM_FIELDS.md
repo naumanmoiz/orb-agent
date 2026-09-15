@@ -108,8 +108,14 @@ infers it, so the check catches both directions:
 
 ```yaml
 lab_id: 312      # integer, matches an integer custom field
-lab_id: "312"    # text, rejected by an integer custom field
+lab_id: "312"    # text, matches a text, longtext, url or select field
 ```
+
+A NetBox **select** field holds a string, so its value must be quoted. The
+script also fetches the choice set and reports a value that is not one of the
+choices. That check matters because NetBox validates a select value in
+`full_clean()`, which the Diode NetBox plugin does not call, so an off-list
+value is written rather than rejected and then reads as invalid in the UI.
 
 A field attached to more models than `ipam.ipaddress` is fine. The script only
 requires that `ipam.ipaddress` is among them, and an update adds it without
@@ -124,6 +130,14 @@ needs manual attention, so it can gate a deploy.
 one line with the likely cause; a `Connection reset by peer` is usually `http`
 against an HTTPS listener. Use `--insecure` for a self-signed or internal CA
 certificate.
+
+The default Authorization scheme is `Token`, which is what stock NetBox expects.
+If your deployment issues bearer tokens, pass `--auth-scheme Bearer` or set
+`NETBOX_AUTH_SCHEME`. The distinction matters: NetBox rejects a credential whose
+scheme it recognises but whose value it cannot verify, giving a 403, while it
+ignores a scheme it does not recognise and falls through to anonymous access. So
+the same token can appear to work with one scheme and 403 with the other, and
+`Bearer` succeeding may only mean anonymous reads are permitted.
 
 It resolves `object_types` versus `content_types` from the running NetBox
 version. NetBox renamed the field in 4.1, and sending the wrong one is accepted

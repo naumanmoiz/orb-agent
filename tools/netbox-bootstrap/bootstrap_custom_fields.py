@@ -58,18 +58,22 @@ IPAM_OBJECT_TYPES = ["ipam.ipaddress"]
 class NetBox:
     """Minimal NetBox REST client scoped to custom fields."""
 
-    def __init__(self, url: str, token: str, dry_run: bool, verify: bool = True) -> None:
+    def __init__(self, url: str, token: str, dry_run: bool, verify: bool = True,
+                 auth_scheme: str = "Token") -> None:
         self.url = url.rstrip("/")
         self.dry_run = dry_run
+        self.auth_scheme = auth_scheme
         self.session = requests.Session()
         self.session.verify = verify
         self.session.headers.update({
-            "Authorization": f"Token {token}",
+            "Authorization": f"{auth_scheme} {token}",
             "Accept": "application/json",
             "Content-Type": "application/json",
         })
         self.planned: list[str] = []
         self.problems: list[str] = []
+        # Literal (non-token) values from the policy, for the select choice check.
+        self.expected_values: dict[str, Any] = {}
         self._version: str | None = None
 
     def _fail(self, what: str, err: Exception) -> "SystemExit":
@@ -127,6 +131,8 @@ class NetBox:
                 lines += [
                     "  The token is missing, mistyped, expired, or restricted to other source IPs.",
                     "  Check it is set and not truncated:  echo \"${NETBOX_TOKEN:0:8}...\"",
+                    f"  This request used the {self.auth_scheme} scheme. If your deployment issues",
+                    "  bearer tokens (an nbt_ prefix is a hint), re-run with --auth-scheme Bearer.",
                 ]
             else:
                 lines += [
@@ -226,7 +232,7 @@ def ensure_custom_field(nb: NetBox, name: str, field_type: str) -> None:
         current = [c if isinstance(c, str) else c.get("value", "") for c in current]
         missing = [t for t in IPAM_OBJECT_TYPES if t not in current]
 
-        if actual_type != field_type:
+        if not types_compatible(actual_type, field_type):
             # This is the failure that reaches the reconciler as
             # ERR_OPS_GENERATE_DIFF. Either side can be the wrong one, so name
             # both: the type is inferred from the policy value, so a quoted
@@ -243,7 +249,12 @@ def ensure_custom_field(nb: NetBox, name: str, field_type: str) -> None:
 
         if not missing:
             print(f"  ok       custom field {name} ({actual_type}) on {', '.join(current)}")
+            if actual_type == "select":
+                _check_choice(nb, name, existing)
             return
+
+        if actual_type == "select":
+            _check_choice(nb, name, existing)
 
         label = f"custom field {name}: add {', '.join(missing)}"
         if nb.dry_run:
@@ -281,6 +292,18 @@ _TOKEN_TYPES = {
 }
 
 
+# NetBox types that hold a string and therefore accept what the backend sends as
+# text. A select stores the chosen value verbatim in custom_field_data.
+_STRING_TYPES = {"text", "longtext", "url", "select"}
+
+
+def types_compatible(netbox_type: str, sending: str) -> bool:
+    """Whether what the policy will send can land in this NetBox field."""
+    if netbox_type == sending:
+        return True
+    return netbox_type in _STRING_TYPES and sending == "text"
+
+
 def infer_field_type(value: Any) -> str:
     """Map a policy value to the NetBox custom field type the agent will send.
 
@@ -310,6 +333,35 @@ def infer_field_type(value: Any) -> str:
     return "text"
 
 
+def _check_choice(nb: "NetBox", name: str, field: dict[str, Any]) -> None:
+    """Warn when a select field's configured value is not one of its choices.
+
+    NetBox validates a select value in full_clean(), which the Diode NetBox
+    plugin does not call, so an off-list value is written rather than rejected
+    and then reads as invalid in the UI. Checking here is the only place it
+    surfaces before the data lands.
+    """
+    configured = nb.expected_values.get(name)
+    if configured is None:
+        return
+    choice_set = field.get("choice_set") or {}
+    set_id = choice_set.get("id")
+    if not set_id:
+        return
+    data = nb.get(f"/api/extras/custom-field-choice-sets/{set_id}/") or {}
+    choices = [c[0] if isinstance(c, (list, tuple)) else c
+               for c in (data.get("extra_choices") or [])]
+    if not choices:
+        return
+    if str(configured) not in [str(c) for c in choices]:
+        problem = (f"custom field {name}: the policy sends {configured!r}, which is not one of "
+                   f"the choices in set {choice_set.get('name', set_id)} ({', '.join(map(str, choices))})")
+        nb.problems.append(problem)
+        print(f"  ! CHOICE  {problem}")
+    else:
+        print(f"             value {configured!r} is a valid choice")
+
+
 def _value_hint(netbox_type: str) -> str:
     """A concrete YAML example for the type NetBox actually has."""
     hints = {
@@ -319,11 +371,12 @@ def _value_hint(netbox_type: str) -> str:
         "decimal": " (e.g. 1.5)",
         "datetime": " (${SCAN_TIMESTAMP}, or an unquoted 2026-09-15T00:00:00Z)",
         "json": " (a YAML mapping or list)",
+        "select": ' (quoted, and one of the choice set values, e.g. lab_id: "312")',
     }
     return hints.get(netbox_type, "")
 
 
-def collect_from_config(path: str) -> dict[str, str]:
+def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any]]:
     """Read the custom field names a config names, with the type each will carry.
 
     Reads both the agent-level shape (orb.policies.network_discovery.<name>) and
@@ -344,6 +397,7 @@ def collect_from_config(path: str) -> dict[str, str]:
     policies = policies or {}
 
     custom_fields = dict(BASE_CUSTOM_FIELDS)
+    values: dict[str, Any] = {}
     conflicts: dict[str, set[str]] = {}
     for policy in policies.values():
         config = (policy or {}).get("config") or {}
@@ -354,11 +408,15 @@ def collect_from_config(path: str) -> dict[str, str]:
                 # problem: whichever reconciles second is rejected.
                 conflicts.setdefault(name, {custom_fields[name]}).add(inferred)
             custom_fields[name] = inferred
+            # A ${TOKEN} is resolved at scan time, so only a literal can be
+            # checked against a choice set here.
+            if not (isinstance(value, str) and value.startswith("${")):
+                values[name] = value
 
     for name, types in conflicts.items():
         print(f"  ! policies disagree on custom field {name}: {', '.join(sorted(types))}. "
               "One NetBox field cannot be both.", file=sys.stderr)
-    return custom_fields
+    return custom_fields, values
 
 
 def main() -> int:
@@ -372,12 +430,19 @@ def main() -> int:
                         help="NetBox API token (default: $NETBOX_TOKEN)")
     parser.add_argument("--insecure", action="store_true",
                         help="skip TLS certificate verification (self-signed or internal CA)")
+    parser.add_argument("--auth-scheme", default=os.environ.get("NETBOX_AUTH_SCHEME", "Token"),
+                        choices=["Token", "Bearer"],
+                        help="Authorization header scheme (default: Token, or $NETBOX_AUTH_SCHEME)")
     args = parser.parse_args()
 
     if not args.url or not args.token:
         parser.error("NETBOX_URL and NETBOX_TOKEN must be set, or passed with --url/--token")
 
-    custom_fields = collect_from_config(args.config) if args.config else dict(BASE_CUSTOM_FIELDS)
+    expected_values: dict[str, Any] = {}
+    if args.config:
+        custom_fields, expected_values = collect_from_config(args.config)
+    else:
+        custom_fields = dict(BASE_CUSTOM_FIELDS)
 
     if args.insecure:
         # Only the operator can decide an internal CA is acceptable, so this is
@@ -385,8 +450,10 @@ def main() -> int:
         import urllib3
 
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    nb = NetBox(args.url, args.token, args.dry_run, verify=not args.insecure)
-    print(f"NetBox {nb.version or 'unknown version'} at {nb.url}")
+    nb = NetBox(args.url, args.token, args.dry_run, verify=not args.insecure,
+                auth_scheme=args.auth_scheme)
+    nb.expected_values = expected_values
+    print(f"NetBox {nb.version or 'unknown version'} at {nb.url} (auth: {nb.auth_scheme})")
     print(f"custom field object types key: {nb.object_types_field}")
     if args.dry_run:
         print("dry run: nothing will be written\n")
