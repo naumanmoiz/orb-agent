@@ -6,6 +6,9 @@ record.
 
 Purely additive. A policy that sets no `custom_fields` behaves exactly as before.
 
+For build and deploy steps, see
+[CUSTOM_FIELDS_RUNBOOK.md](CUSTOM_FIELDS_RUNBOOK.md).
+
 ## Config
 
 ```yaml
