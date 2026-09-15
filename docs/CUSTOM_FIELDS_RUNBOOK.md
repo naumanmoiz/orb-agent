@@ -165,6 +165,13 @@ point `REQUESTS_CA_BUNDLE` at your CA bundle.
 
 `NETBOX_URL` is the base URL, without `/api`.
 
+A `403` is reported with NetBox's own `detail`, which is what separates the two
+causes: `Invalid token.` means the token is wrong, missing or IP-restricted,
+while `You do not have permission to perform this action.` means it
+authenticated but its user lacks `extras.view_customfield`. Only `--dry-run`
+needs read alone; creating fields also needs `extras.add_customfield` and
+`extras.change_customfield`. A superuser token sidesteps all of it.
+
 ## 5. Dry run
 
 Uncomment both dry-run keys under `backends.common.diode`:

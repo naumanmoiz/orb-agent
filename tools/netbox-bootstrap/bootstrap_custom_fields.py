@@ -108,12 +108,37 @@ class NetBox:
         except requests_exceptions.RequestException as err:
             raise self._fail(f"{method} {path}", err) from None
         if response.status_code in (401, 403):
-            raise SystemExit(
-                f"error: {method} {path} returned {response.status_code}.\n"
-                "  The NetBox token is missing, wrong, or lacks permission on custom fields.\n"
-                "  It needs extras.view_customfield, and extras.add_customfield /\n"
-                "  extras.change_customfield unless you only ever use --dry-run."
+            # NetBox puts the discriminator in the body: "Invalid token" is a
+            # different problem from a valid token without object permissions,
+            # and the status code alone cannot tell them apart.
+            detail = ""
+            try:
+                detail = str((response.json() or {}).get("detail", "")).strip()
+            except ValueError:
+                detail = response.text[:200].strip()
+
+            lines = [f"error: {method} {path} returned {response.status_code}."]
+            if detail:
+                lines.append(f"  NetBox said: {detail}")
+
+            lowered = detail.lower()
+            if "token" in lowered or response.status_code == 401:
+                lines += [
+                    "  The token is missing, mistyped, expired, or restricted to other source IPs.",
+                    "  Check it is set and not truncated:  echo \"${NETBOX_TOKEN:0:8}...\"",
+                ]
+            else:
+                lines += [
+                    "  The token authenticated but lacks permission on custom fields.",
+                    "  Grant its user extras.view_customfield (plus extras.add_customfield and",
+                    "  extras.change_customfield unless you only ever use --dry-run), or use a",
+                    "  token belonging to a superuser.",
+                ]
+            lines.append(
+                "  Confirm independently:\n"
+                f"    curl -sS -H \"Authorization: Token $NETBOX_TOKEN\" {self.url}/api/extras/custom-fields/ | head -c 300"
             )
+            raise SystemExit("\n".join(lines))
         if not response.ok:
             content_type = response.headers.get("Content-Type", "")
             if "json" not in content_type:
