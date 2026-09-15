@@ -185,6 +185,11 @@ under the parent, and the child's IP Addresses tab should list the address.
 
 ## Known limitations
 
+- **A rejected field costs every entity carrying it.** The reconciler plans one
+  ingestion log per entity, so a failure is scoped to the entities naming the bad
+  field rather than the whole ingest. A field set in the policy block is on every
+  prefix and address, so in practice that is the whole scan.
+
 - **One VRF per policy.** Containment only nests within a VRF, so use one policy
   per lab. One agent runs many policies.
 - **No NetBox lookup.** `subnet_map` is static. A prefix in NetBox but absent

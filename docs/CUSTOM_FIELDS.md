@@ -82,8 +82,9 @@ need sub-day last-seen resolution and have measured the write volume.
 
 Diode **never creates custom field definitions**. If an entity references one
 that does not exist, the NetBox plugin rejects the plan and the reconciler
-reports `ERR_OPS_GENERATE_DIFF`, dropping the **whole batch** rather than the
-offending field.
+reports `ERR_OPS_GENERATE_DIFF`. The reconciler creates one ingestion log per
+entity and plans each independently, so the failure costs every entity carrying
+that field, not the whole ingest.
 
 ```bash
 pip install requests PyYAML
@@ -205,7 +206,9 @@ The `error` column carries the NetBox plugin's response and names the field.
 
 ## Known limitations
 
-- **A rejected changeset takes the whole batch**, not just the offending entity.
+- **A rejected field costs every entity carrying it.** Planning is per entity,
+  so an unrelated entity in the same ingest still reconciles, but a field named
+  in the policy block is on every address and takes all of them.
 - **Removing a key does not clear the value in NetBox.** An absent field is
   omitted from the changeset rather than sent as null, so the old value stays.
   Clear it in NetBox directly.

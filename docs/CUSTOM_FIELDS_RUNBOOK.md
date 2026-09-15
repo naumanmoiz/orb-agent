@@ -122,7 +122,9 @@ Credentials come from the environment, never the file.
 
 Diode never creates custom field definitions. An entity naming one that does not
 exist makes the NetBox plugin reject the plan, and the reconciler reports
-`ERR_OPS_GENERATE_DIFF` after dropping the **whole batch**.
+`ERR_OPS_GENERATE_DIFF`. Planning is per entity, so this costs every entity
+carrying that field. A field named in the policy block is on every address, so
+in practice that is the entire scan.
 
 ```bash
 pip install requests PyYAML
@@ -401,6 +403,7 @@ something clears them.
 
 | Symptom | Cause |
 |---|---|
+| `Unknown field name 'X' in custom field data` | The custom field does not exist in NetBox. Run step 4 **without** `--dry-run`, or create it by hand. This is the most common failure. |
 | `ERR_OPS_GENERATE_DIFF` in the reconciler log | A custom field is missing, not on `ipam.ipaddress`, or the wrong type. Re-run step 4. |
 | No `custom_fields` in the dry-run output | The policy has no `custom_fields`, or a `${VAR}` failed to resolve. Check the agent log for `skipping custom fields`. |
 | `discovery_agent` missing, log says `${AGENT_NAME} is empty` | `common.diode.agent_name` is unset. |
