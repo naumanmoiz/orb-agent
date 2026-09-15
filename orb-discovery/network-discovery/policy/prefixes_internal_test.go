@@ -367,3 +367,34 @@ func TestTenantReferenceCarriesTheGroup(t *testing.T) {
 			"inventing a group would miss a genuinely group-less tenant")
 	})
 }
+
+// The VRF reference must carry only what identifies it. Tags, description and
+// comments are not part of any VRF matcher, and sending them would make the
+// agent an author of fields an operator owns. Absent keys are left out of the
+// changeset entirely, so a prebuilt VRF keeps its own.
+func TestVrfReferenceCarriesNothingItDoesNotNeed(t *testing.T) {
+	defaults := config.Defaults{
+		Vrf: "VRF-Lab-312", VrfTenant: "312", TenantGroup: "Labs",
+		Tenant: "312",
+		Tags:   []string{"orb", "Lab 312"},
+	}
+	r := prefixRunner(t, defaults, nestedMap(t))
+	prefix := r.prefixEntities(nil, "p")[0].(*diode.Prefix)
+	vrf := prefix.Vrf
+
+	require.NotNil(t, vrf)
+	assert.Equal(t, "VRF-Lab-312", *vrf.Name)
+	// Identity only.
+	require.NotNil(t, vrf.Tenant)
+	assert.Equal(t, "312", *vrf.Tenant.Name)
+	require.NotNil(t, vrf.Tenant.Group)
+	assert.Equal(t, "Labs", *vrf.Tenant.Group.Name)
+	// Everything else stays off it. defaults.tags belongs on the prefix and the
+	// address; putting it on the VRF would merge agent tags into an operator's.
+	assert.Nil(t, vrf.Tags, "defaults.tags must not reach the VRF reference")
+	assert.Nil(t, vrf.Description)
+	assert.Nil(t, vrf.Comments)
+	assert.Nil(t, vrf.EnforceUnique)
+	// The tags did reach the prefix, which is where they belong.
+	require.Len(t, prefix.Tags, 2)
+}

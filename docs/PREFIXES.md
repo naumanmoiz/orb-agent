@@ -42,6 +42,28 @@ matches**. Diode then creates a second, empty VRF of the same name and
 reconciles into it. That reads as success while splitting the lab's address
 space across two VRFs.
 
+### What is and is not part of VRF identity
+
+Only some of a VRF's fields take part in matching. The rest are untouched.
+
+| VRF field | Part of matching? | What the agent sends |
+|---|---|---|
+| `name` | yes, always | `defaults.vrf` |
+| `tenant` | yes, its presence selects the criterion | `defaults.vrf_tenant` |
+| `rd` | yes, switches to NetBox's rd constraint | `defaults.rd` |
+| `tags` | **no** | nothing |
+| `description`, `comments`, `enforce_unique`, route targets | **no** | nothing |
+
+A tagged VRF is safe. Tags are not in any VRF matcher, so they neither help nor
+hinder the match, and the agent never sends them. The plugin's `_partially_merge`
+only processes keys present in the payload, and `tags` specifically is merged
+with the existing list rather than replacing it, so a prebuilt VRF keeps its tags
+whether or not anything sends them.
+
+`defaults.tags` deliberately reaches the prefix and the address, never the VRF.
+Putting agent tags on an object an operator owns is not the agent's business,
+and it would not help matching anyway.
+
 ### The same trap applies to tenants
 
 NetBox makes `Tenant` unique on `(group, name)` with `nulls_distinct=False`. The
