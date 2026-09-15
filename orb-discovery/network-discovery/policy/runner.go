@@ -47,6 +47,7 @@ type Runner struct {
 	scope     config.Scope
 	config    config.PolicyConfig
 	targets   []targetInfo
+	matcher   *subnetMatcher
 	agentName string
 	runStore  *RunStore
 }
@@ -74,6 +75,13 @@ func (r *Runner) getIPWithMask(ipStr string, defaultMask string) string {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		return ipStr + defaultMask
+	}
+
+	// A subnet_map match is more specific than any target: the map states what
+	// the prefix actually is, while a target only states what was scanned. With
+	// no match the target-mask behaviour below is unchanged.
+	if entry := r.matcher.match(ip); entry != nil {
+		return ipStr + fmt.Sprintf("/%d", entry.MaskBits())
 	}
 
 	var bestTarget *targetInfo
@@ -126,6 +134,7 @@ func NewRunner(ctx context.Context, logger *slog.Logger, name string, policy con
 	runner.config = policy.Config
 
 	runner.targets = parseTargets(policy.Scope.Targets)
+	runner.matcher = newSubnetMatcher(policy.Scope.SubnetMap)
 
 	return runner, nil
 }
@@ -322,18 +331,8 @@ func (r *Runner) run() {
 			))
 	}
 
-	entities := make([]diode.Entity, 0, len(result.Hosts))
-	if len(result.Hosts) == 0 {
-		r.logger.Warn("discovery complete: no hosts found", "targets", r.scope.Targets,
-			"policy", policyName)
-		// Update run status to completed even if no hosts found
-		r.runStore.UpdateRun(policyName, run.ID, RunStatusCompleted, nil, 0)
-		return
-	}
-	r.logger.Info("discovery complete", "hosts_found", len(result.Hosts), "policy", policyName)
-
-	// Resolve the custom field values once for the whole run so every address
-	// carries the same ${SCAN_TIMESTAMP}. Resolving per address would stamp hosts
+	// Resolve the custom field values once for the whole run so every entity
+	// carries the same ${SCAN_TIMESTAMP}. Resolving per entity would stamp hosts
 	// discovered seconds apart with different values, and at scale that alone
 	// makes every entity differ from what NetBox holds.
 	customFields, err := config.ResolveCustomFields(r.config.CustomFields, config.CustomFieldTokens{
@@ -344,6 +343,27 @@ func (r *Runner) run() {
 	if err != nil {
 		// One unresolvable value should not cost a scan's worth of addresses.
 		r.logger.Error("skipping custom fields", "error", err, "policy", policyName)
+	}
+
+	// Prefixes are declared, not discovered, so they go out ahead of the
+	// addresses and regardless of what answered the scan.
+	prefixes := r.prefixEntities(customFields, policyName)
+
+	entities := make([]diode.Entity, 0, len(prefixes)+len(result.Hosts))
+	entities = append(entities, prefixes...)
+
+	if len(result.Hosts) == 0 {
+		r.logger.Warn("discovery complete: no hosts found", "targets", r.scope.Targets,
+			"policy", policyName)
+		if len(entities) == 0 {
+			// Update run status to completed even if no hosts found
+			r.runStore.UpdateRun(policyName, run.ID, RunStatusCompleted, nil, 0)
+			return
+		}
+		// subnet_map declares prefixes independently of what answered, so they
+		// are still worth ingesting.
+	} else {
+		r.logger.Info("discovery complete", "hosts_found", len(result.Hosts), "policy", policyName)
 	}
 
 	// Track discovered hosts
@@ -409,6 +429,24 @@ func (r *Runner) run() {
 	}
 }
 
+// prefixEntities builds the Prefix entities declared by scope.subnet_map,
+// deduped so each is sent once per run. Returns nil when no subnet_map is
+// configured, which is what keeps an upstream policy emitting addresses alone.
+func (r *Runner) prefixEntities(customFields map[string]any, policyName string) []diode.Entity {
+	if len(r.scope.SubnetMap) == 0 {
+		return nil
+	}
+	builder := newPrefixBuilder(r.config.Defaults, r.logger, policyName)
+	for i := range r.scope.SubnetMap {
+		entry := &r.scope.SubnetMap[i]
+		builder.add(entry, config.MergeCustomFields(customFields, entry.CustomFields))
+	}
+	entities := builder.entities()
+	r.logger.Info("emitting prefixes declared by subnet_map",
+		"prefix_count", len(entities), "policy", policyName)
+	return entities
+}
+
 // Start starts the policy runner
 func (r *Runner) Start() {
 	if rMetric := metrics.GetActivePolicies(); rMetric != nil {
@@ -450,11 +488,7 @@ func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr, policyName string
 		hasComments = true
 		ip.Comments = diode.String(r.config.Defaults.Comments)
 	}
-	if r.config.Defaults.Vrf != "" {
-		vrf := &diode.VRF{Name: diode.String(r.config.Defaults.Vrf)}
-		if r.config.Defaults.Rd != "" {
-			vrf.Rd = diode.String(r.config.Defaults.Rd)
-		}
+	if vrf := vrfReference(r.config.Defaults.Vrf, r.config.Defaults.Rd); vrf != nil {
 		ip.Vrf = vrf
 	}
 	if r.config.Defaults.Tenant != "" {

@@ -54,6 +54,11 @@ type Scope struct {
 	ICMPTimestamp  *bool    `yaml:"icmp_timestamp,omitempty"`
 	ICMPNetMask    *bool    `yaml:"icmp_netmask,omitempty"`
 	SkipHost       *bool    `yaml:"skip_host,omitempty"`
+	// SubnetMap declares the subnets to create as NetBox prefixes, and gives
+	// each discovered address the mask of the most specific entry containing it.
+	// Nothing is looked up in NetBox and nothing is inferred. An empty
+	// subnet_map leaves the policy emitting IP addresses alone, as before.
+	SubnetMap []SubnetMapEntry `yaml:"subnet_map,omitempty"`
 }
 
 // Defaults represents the supported default values for a policy
@@ -66,6 +71,9 @@ type Defaults struct {
 	Comments    string   `yaml:"comments,omitempty"`
 	Tags        []string `yaml:"tags,omitempty"`
 	NetworkMask *int     `yaml:"network_mask,omitempty"`
+	// Prefix applies only to the prefixes declared in scope.subnet_map. With no
+	// subnet_map the backend emits IP addresses alone and this is ignored.
+	Prefix PrefixDefaults `yaml:"prefix,omitempty"`
 }
 
 // PolicyConfig represents the configuration of a policy

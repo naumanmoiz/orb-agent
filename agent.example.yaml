@@ -34,10 +34,19 @@ orb:
           timeout: 10
           # Existing keys, unchanged.
           defaults:
+            # Must name a VRF that already exists in NetBox. The Diode NetBox
+            # plugin matches a VRF on name alone, and only while its rd and
+            # tenant are both null, so a name that does not exist is created as
+            # an empty VRF rather than failing. Verify with the bootstrap script
+            # before deploying.
             vrf: LAB-AUS-01
             tenant: LAB-AUS-01
             description: "Discovered by orb network_discovery"
             tags: [orb, network-discovery]
+            # NEW: defaults for the prefixes declared in scope.subnet_map.
+            prefix:
+              status: active
+              role: lab-data
           # NEW: applied to every IP address this policy emits. Keys are NetBox
           # custom field names (snake_case, the name and not the label) and the
           # definitions must already exist on ipam.ipaddress.
@@ -60,3 +69,24 @@ orb:
         scope:
           targets:
             - 192.0.2.0/24
+          # NEW: the subnets to create as NetBox prefixes. Declared, not
+          # discovered: an entry is emitted whether or not anything in it
+          # answered the scan, and an entry need not be a scan target.
+          #
+          # NetBox derives parent/child nesting from containment within the VRF,
+          # so no parent is named here. Every entry goes into defaults.vrf, and
+          # each discovered address takes the mask of the most specific entry
+          # containing it, which is what files it under that prefix.
+          subnet_map:
+            - prefix: 192.0.2.0/24
+              status: container
+              role: lab-aggregate
+              description: "Lab aggregate"
+            - prefix: 192.0.2.0/25
+              role: lab-servers
+              custom_fields:
+                lab_id: "312"
+            - prefix: 192.0.2.128/26
+              role: lab-gpu
+              custom_fields:
+                lab_id: "312"

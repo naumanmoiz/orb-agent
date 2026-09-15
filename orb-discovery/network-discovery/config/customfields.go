@@ -104,6 +104,32 @@ func ResolveCustomFields(raw map[string]any, tokens CustomFieldTokens) (map[stri
 	return out, nil
 }
 
+// MergeCustomFields overlays override onto base, returning a new map. Used for
+// the per-entry custom_fields of a subnet_map entry, which extend rather than
+// replace the policy-level block.
+//
+// override holds raw YAML values while base is already resolved, so the
+// overlay is resolved here rather than by the caller.
+func MergeCustomFields(base map[string]any, override map[string]any) map[string]any {
+	if len(override) == 0 {
+		return base
+	}
+	out := make(map[string]any, len(base)+len(override))
+	for k, v := range base {
+		out[k] = v
+	}
+	for _, key := range sortedKeys(override) {
+		// A per-entry value is a literal, never a token: tokens are policy-wide
+		// and resolving them here would give a second, different timestamp.
+		value, err := resolveCustomFieldValue(override[key], CustomFieldTokens{})
+		if err != nil || value == nil {
+			continue
+		}
+		out[key] = value
+	}
+	return out
+}
+
 // resolveCustomFieldValue substitutes and normalizes a single value.
 func resolveCustomFieldValue(value any, tokens CustomFieldTokens) (any, error) {
 	switch v := value.(type) {

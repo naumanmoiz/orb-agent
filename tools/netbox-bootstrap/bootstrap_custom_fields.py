@@ -51,8 +51,9 @@ BASE_CUSTOM_FIELDS: dict[str, str] = {
     "discovery_source": "text",
 }
 
-# network_discovery emits IP addresses only, so this is the single model.
-IPAM_OBJECT_TYPES = ["ipam.ipaddress"]
+# network_discovery emits IP addresses, and prefixes when a policy declares a
+# subnet_map. Custom fields are written to both, so both must be attached.
+IPAM_OBJECT_TYPES = ["ipam.ipaddress", "ipam.prefix"]
 
 
 class NetBox:
@@ -362,6 +363,72 @@ def _check_choice(nb: "NetBox", name: str, field: dict[str, Any]) -> None:
         print(f"             value {configured!r} is a valid choice")
 
 
+def check_vrfs(nb: "NetBox", names: set[str]) -> None:
+    """Report a VRF the policy names that NetBox does not have.
+
+    Deliberately never creates one. The Diode NetBox plugin matches a VRF on
+    name alone, and only while its rd and tenant are both null, so a name that
+    does not already exist is silently created by the reconciler as an empty
+    VRF. That looks like it worked and quietly splits a lab's address space
+    across two VRFs, which is the failure this check exists to prevent.
+    """
+    if not names:
+        return
+    print("\nvrfs (verified, never created):")
+    for name in sorted(names):
+        existing = nb.find("/api/ipam/vrfs/", name=name)
+        if not existing:
+            problem = (f"VRF {name!r} does not exist. Diode would create an empty one rather than "
+                       "match your prebuilt VRF. Create it in NetBox, or fix defaults.vrf.")
+            nb.problems.append(problem)
+            print(f"  ! MISSING {problem}")
+            continue
+        rd = existing.get("rd")
+        tenant = existing.get("tenant")
+        note = ""
+        if rd:
+            note = f", rd={rd}: the policy must set defaults.rd to exactly this or it will not match"
+        elif tenant:
+            note = ", which has a tenant: matching is then on (name, tenant)"
+        print(f"  ok       VRF {name} (id={existing['id']}){note}")
+        if rd:
+            nb.problems.append(f"VRF {name} has rd={rd}; set defaults.rd to match, or matching fails")
+
+
+def check_roles(nb: "NetBox", names: set[str]) -> None:
+    """Create the ipam.Role objects a subnet_map names."""
+    if not names:
+        return
+    print("\nipam roles:")
+    for name in sorted(names):
+        slug = slugify(name)
+        existing = nb.find("/api/ipam/roles/", slug=slug)
+        if existing:
+            print(f"  ok       ipam role {name} (id={existing['id']})")
+            continue
+        if nb.dry_run:
+            nb.planned.append(f"CREATE ipam role {name}")
+            print(f"  + create ipam role {name}")
+            continue
+        created = nb.post("/api/ipam/roles/", {"name": name, "slug": slug})
+        print(f"  created  ipam role {name} (id={created['id']})")
+
+
+def slugify(value: str) -> str:
+    """Lower-case, replacing each run of non-alphanumerics with one hyphen.
+
+    Matches the slug the NetBox plugin generates from a Role name, so the role
+    this script creates is the one the agent then reconciles against.
+    """
+    out: list[str] = []
+    for char in value.strip().lower():
+        if char.isalnum() and char.isascii():
+            out.append(char)
+        elif out and out[-1] != "-":
+            out.append("-")
+    return "".join(out).rstrip("-")
+
+
 def _value_hint(netbox_type: str) -> str:
     """A concrete YAML example for the type NetBox actually has."""
     hints = {
@@ -376,7 +443,7 @@ def _value_hint(netbox_type: str) -> str:
     return hints.get(netbox_type, "")
 
 
-def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any]]:
+def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], set[str], set[str]]:
     """Read the custom field names a config names, with the type each will carry.
 
     Reads both the agent-level shape (orb.policies.network_discovery.<name>) and
@@ -398,9 +465,23 @@ def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any]]:
 
     custom_fields = dict(BASE_CUSTOM_FIELDS)
     values: dict[str, Any] = {}
+    vrfs: set[str] = set()
+    roles: set[str] = set()
     conflicts: dict[str, set[str]] = {}
     for policy in policies.values():
         config = (policy or {}).get("config") or {}
+        scope = (policy or {}).get("scope") or {}
+        defaults = config.get("defaults") or {}
+        if defaults.get("vrf"):
+            vrfs.add(defaults["vrf"])
+        if (defaults.get("prefix") or {}).get("role"):
+            roles.add(defaults["prefix"]["role"])
+        for entry in scope.get("subnet_map") or []:
+            if entry.get("role"):
+                roles.add(entry["role"])
+            for name, value in (entry.get("custom_fields") or {}).items():
+                custom_fields.setdefault(name, infer_field_type(value))
+                values.setdefault(name, value)
         for name, value in (config.get("custom_fields") or {}).items():
             inferred = infer_field_type(value)
             if name in custom_fields and custom_fields[name] != inferred:
@@ -416,7 +497,7 @@ def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any]]:
     for name, types in conflicts.items():
         print(f"  ! policies disagree on custom field {name}: {', '.join(sorted(types))}. "
               "One NetBox field cannot be both.", file=sys.stderr)
-    return custom_fields, values
+    return custom_fields, values, vrfs, roles
 
 
 def main() -> int:
@@ -439,8 +520,10 @@ def main() -> int:
         parser.error("NETBOX_URL and NETBOX_TOKEN must be set, or passed with --url/--token")
 
     expected_values: dict[str, Any] = {}
+    vrfs: set[str] = set()
+    roles: set[str] = set()
     if args.config:
-        custom_fields, expected_values = collect_from_config(args.config)
+        custom_fields, expected_values, vrfs, roles = collect_from_config(args.config)
     else:
         custom_fields = dict(BASE_CUSTOM_FIELDS)
 
@@ -461,6 +544,9 @@ def main() -> int:
     print("custom fields:")
     for name in sorted(custom_fields):
         ensure_custom_field(nb, name, custom_fields[name])
+
+    check_vrfs(nb, vrfs)
+    check_roles(nb, roles)
 
     if args.dry_run and nb.planned:
         print(f"\ndry run summary: {len(nb.planned)} change(s) would be made")

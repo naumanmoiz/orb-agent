@@ -5,6 +5,7 @@ The network discovery backend leverages [NMAP](https://nmap.org/) to scan networ
 The network discovery backend uses [Diode Go SDK](https://github.com/netboxlabs/diode-sdk-go) to ingest the following entities:
 
 * [IP Address](https://github.com/netboxlabs/diode-sdk-go/blob/develop/docs/examples/ip_address/main.go)
+* Prefix, when the policy declares a `scope.subnet_map`
 
 IP addresses support VRF, Tenant, Role, Description, Comments and Tags via `defaults`,
 and NetBox custom fields via `config.custom_fields`. See
@@ -61,6 +62,7 @@ Config defines data for the whole scope and is optional overall.
 | defaults | map | no  |  key value pair that defines default values  |
 | timeout | int | no | Timeout in minutes for the nmap scan operation. The default value is 5 minutes.
 | custom_fields | map | no | NetBox custom field values applied to every emitted IP address. The definitions must already exist in NetBox on `ipam.ipaddress`. See [docs/CUSTOM_FIELDS.md](../CUSTOM_FIELDS.md). |
+| subnet_map (scope) | list | no | Subnets to create as NetBox prefixes. Each discovered address takes the mask of the most specific entry containing it. See [docs/PREFIXES.md](../PREFIXES.md). |
 | timestamp_precision | str | no | How much of `${SCAN_TIMESTAMP}` is kept: `nanosecond`, `second`, `minute`, `hour` or `day` (default). Coarser precision lets an unchanged address reconcile to a no-op instead of being rewritten every scan. |
 
 #### Defaults
@@ -76,6 +78,7 @@ Current supported defaults:
 | description | str | NetBox Description data to be added to discovered IP |
 | tags | list | NetBox Tags to be added to discovered IP |
 | network_mask | int | Default network mask to be applied to IPv4 (default: 32) |
+| prefix | map | Defaults for the prefixes declared in `scope.subnet_map`: `status`, `role`, `tenant`, `is_pool`, `mark_utilized`, `tags`, `description`. See [docs/PREFIXES.md](../PREFIXES.md). |
 
 ### Scope
 The scope defines a list of targets to be scanned.
