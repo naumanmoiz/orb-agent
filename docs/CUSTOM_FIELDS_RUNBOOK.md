@@ -150,6 +150,21 @@ Drop `--dry-run` to create what is missing. A type mismatch is reported, never
 corrected: retyping a populated custom field is destructive, so that is your
 call.
 
+If it cannot reach NetBox it says so in one line with the likely cause. The most
+common is a scheme mismatch, where `NETBOX_URL` says `http` but NetBox serves
+HTTPS, which shows up as `Connection reset by peer`. Confirm the address
+independently first:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' "$NETBOX_URL/api/"
+```
+
+`200` or `403` means the address is right. A hang or a reset means the scheme or
+port is wrong. For a self-signed or internal CA certificate, add `--insecure` or
+point `REQUESTS_CA_BUNDLE` at your CA bundle.
+
+`NETBOX_URL` is the base URL, without `/api`.
+
 ## 5. Dry run
 
 Uncomment both dry-run keys under `backends.common.diode`:

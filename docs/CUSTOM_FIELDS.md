@@ -107,6 +107,11 @@ A type mismatch is reported, never corrected: retyping a populated custom field
 is destructive, so that is your call. The script exits non-zero when any field
 needs manual attention, so it can gate a deploy.
 
+`NETBOX_URL` is the base URL without `/api`. A connection failure is reported in
+one line with the likely cause; a `Connection reset by peer` is usually `http`
+against an HTTPS listener. Use `--insecure` for a self-signed or internal CA
+certificate.
+
 It resolves `object_types` versus `content_types` from the running NetBox
 version. NetBox renamed the field in 4.1, and sending the wrong one is accepted
 as an unknown key, silently producing a custom field attached to nothing.

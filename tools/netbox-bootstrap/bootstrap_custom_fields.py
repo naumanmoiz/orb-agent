@@ -31,6 +31,7 @@ from typing import Any
 
 try:
     import requests
+    from requests import exceptions as requests_exceptions
 except ImportError:  # pragma: no cover - dependency guidance
     sys.exit("requests is required: pip install requests PyYAML")
 
@@ -56,10 +57,11 @@ IPAM_OBJECT_TYPES = ["ipam.ipaddress"]
 class NetBox:
     """Minimal NetBox REST client scoped to custom fields."""
 
-    def __init__(self, url: str, token: str, dry_run: bool) -> None:
+    def __init__(self, url: str, token: str, dry_run: bool, verify: bool = True) -> None:
         self.url = url.rstrip("/")
         self.dry_run = dry_run
         self.session = requests.Session()
+        self.session.verify = verify
         self.session.headers.update({
             "Authorization": f"Token {token}",
             "Accept": "application/json",
@@ -69,13 +71,72 @@ class NetBox:
         self.problems: list[str] = []
         self._version: str | None = None
 
+    def _fail(self, what: str, err: Exception) -> "SystemExit":
+        """Turn a transport failure into one actionable line.
+
+        requests raises through urllib3, so the default traceback is dozens of
+        frames of connection-pool internals with the cause on the last line. The
+        hints below are the causes actually seen in practice, in order.
+        """
+        scheme = urllib.parse.urlparse(self.url).scheme
+        lines = [f"error: {what} failed: {err}", f"  URL: {self.url}"]
+
+        if isinstance(err, requests_exceptions.SSLError):
+            lines += [
+                "  TLS failed. If NetBox uses a self-signed or internal CA certificate,",
+                "  re-run with --insecure, or point REQUESTS_CA_BUNDLE at your CA file.",
+            ]
+        elif isinstance(err, requests_exceptions.ConnectionError):
+            lines.append("  Could not complete an HTTP conversation with that address. Usually:")
+            if scheme == "http":
+                lines.append("    - NetBox is serving HTTPS and the URL says http. Try https://")
+            else:
+                lines.append("    - NetBox is serving plain HTTP and the URL says https. Try http://")
+            lines += [
+                "    - wrong port (NetBox behind a proxy is often 443 or 8000, not the app port)",
+                "    - a proxy or firewall closing the connection",
+                f"  Check with:  curl -sS -o /dev/null -w '%{{http_code}}\\n' {self.url}/api/",
+            ]
+        elif isinstance(err, requests_exceptions.Timeout):
+            lines.append("  The request timed out. The host is reachable but did not answer in 30s.")
+
+        return SystemExit("\n".join(lines))
+
     def _request(self, method: str, path: str, **kwargs: Any) -> Any:
-        response = self.session.request(method, f"{self.url}{path}", timeout=30, **kwargs)
+        try:
+            response = self.session.request(method, f"{self.url}{path}", timeout=30, **kwargs)
+        except requests_exceptions.RequestException as err:
+            raise self._fail(f"{method} {path}", err) from None
+        if response.status_code in (401, 403):
+            raise SystemExit(
+                f"error: {method} {path} returned {response.status_code}.\n"
+                "  The NetBox token is missing, wrong, or lacks permission on custom fields.\n"
+                "  It needs extras.view_customfield, and extras.add_customfield /\n"
+                "  extras.change_customfield unless you only ever use --dry-run."
+            )
         if not response.ok:
-            raise SystemExit(f"{method} {path} failed with {response.status_code}: {response.text[:500]}")
+            content_type = response.headers.get("Content-Type", "")
+            if "json" not in content_type:
+                # An HTML error page means the URL is a web server but not a
+                # NetBox API root; dumping the page body helps nobody.
+                raise SystemExit(
+                    f"error: {method} {path} returned {response.status_code} as "
+                    f"{content_type or 'an unknown content type'}, not JSON.\n"
+                    f"  URL: {self.url}\n"
+                    "  That address answers HTTP but does not look like a NetBox API root.\n"
+                    "  NETBOX_URL should be the base URL, without /api."
+                )
+            raise SystemExit(f"error: {method} {path} returned {response.status_code}: {response.text[:500]}")
         if response.status_code == 204 or not response.content:
             return None
-        return response.json()
+        try:
+            return response.json()
+        except ValueError:
+            raise SystemExit(
+                f"error: {method} {path} did not return JSON.\n"
+                f"  Got {response.headers.get('Content-Type', 'no content type')}. "
+                "Is this URL really a NetBox API root?"
+            ) from None
 
     def get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         query = f"?{urllib.parse.urlencode(params)}" if params else ""
@@ -91,7 +152,10 @@ class NetBox:
     def version(self) -> str:
         """The running NetBox version, from the API root status header."""
         if self._version is None:
-            response = self.session.get(f"{self.url}/api/", timeout=30)
+            try:
+                response = self.session.get(f"{self.url}/api/", timeout=30)
+            except requests_exceptions.RequestException as err:
+                raise self._fail("GET /api/", err) from None
             self._version = response.headers.get("API-Version") or ""
             if not self._version:
                 status = self.get("/api/status/") or {}
@@ -183,8 +247,13 @@ def collect_from_config(path: str) -> dict[str, str]:
     the backend-level shape (policies.<name>) the backend itself receives, so the
     same script works against either file.
     """
-    with open(path, encoding="utf-8") as handle:
-        doc = yaml.safe_load(handle) or {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            doc = yaml.safe_load(handle) or {}
+    except OSError as err:
+        raise SystemExit(f"error: cannot read --config {path}: {err}") from None
+    except yaml.YAMLError as err:
+        raise SystemExit(f"error: --config {path} is not valid YAML: {err}") from None
 
     policies = doc.get("policies")
     if policies is None:
@@ -208,6 +277,8 @@ def main() -> int:
                         help="NetBox base URL (default: $NETBOX_URL)")
     parser.add_argument("--token", default=os.environ.get("NETBOX_TOKEN"),
                         help="NetBox API token (default: $NETBOX_TOKEN)")
+    parser.add_argument("--insecure", action="store_true",
+                        help="skip TLS certificate verification (self-signed or internal CA)")
     args = parser.parse_args()
 
     if not args.url or not args.token:
@@ -215,7 +286,13 @@ def main() -> int:
 
     custom_fields = collect_from_config(args.config) if args.config else dict(BASE_CUSTOM_FIELDS)
 
-    nb = NetBox(args.url, args.token, args.dry_run)
+    if args.insecure:
+        # Only the operator can decide an internal CA is acceptable, so this is
+        # opt-in; silence the per-request warning once they have.
+        import urllib3
+
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    nb = NetBox(args.url, args.token, args.dry_run, verify=not args.insecure)
     print(f"NetBox {nb.version or 'unknown version'} at {nb.url}")
     print(f"custom field object types key: {nb.object_types_field}")
     if args.dry_run:
