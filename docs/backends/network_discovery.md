@@ -6,7 +6,9 @@ The network discovery backend uses [Diode Go SDK](https://github.com/netboxlabs/
 
 * [IP Address](https://github.com/netboxlabs/diode-sdk-go/blob/develop/docs/examples/ip_address/main.go)
 
-IP addresses support VRF, Tenant, Role, Description, Comments and Tags via `defaults`.
+IP addresses support VRF, Tenant, Role, Description, Comments and Tags via `defaults`,
+and NetBox custom fields via `config.custom_fields`. See
+[docs/CUSTOM_FIELDS.md](../CUSTOM_FIELDS.md).
 
 The name a reverse lookup returns for an address becomes the IP's `dns_name`,
 lowercased. NetBox accepts only letters, digits, hyphens and underscores in a
@@ -58,6 +60,8 @@ Config defines data for the whole scope and is optional overall.
 | schedule | cron format | no  |  If defined, it will execute scope following cron schedule time. If not defined, it will execute scope only once  |
 | defaults | map | no  |  key value pair that defines default values  |
 | timeout | int | no | Timeout in minutes for the nmap scan operation. The default value is 5 minutes.
+| custom_fields | map | no | NetBox custom field values applied to every emitted IP address. The definitions must already exist in NetBox on `ipam.ipaddress`. See [docs/CUSTOM_FIELDS.md](../CUSTOM_FIELDS.md). |
+| timestamp_precision | str | no | How much of `${SCAN_TIMESTAMP}` is kept: `nanosecond`, `second`, `minute`, `hour` or `day` (default). Coarser precision lets an unchanged address reconcile to a no-op instead of being rewritten every scan. |
 
 #### Defaults
 Current supported defaults:

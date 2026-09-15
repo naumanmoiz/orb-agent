@@ -1,0 +1,58 @@
+# Overlay build: rebuild only the network-discovery backend and lay it over an
+# existing orb-agent image.
+#
+# Nothing else in the image changes. The IPAM extension lives entirely in
+# orb-discovery/network-discovery, so the orb-agent binary, the other discovery
+# backends, pktvisor and the Python packages are all untouched and are inherited
+# from the base image as-is.
+#
+# The backend is built CGO_ENABLED=0, so the result is a static binary with no
+# libc dependency and drops onto the alpine-based final stage unchanged. That is
+# also why no glibc/musl matching is needed between the builder and the base.
+#
+# Build (amd64 only, as multi-arch is not required here):
+#
+#   docker build -f agent/docker/Dockerfile.overlay \
+#     --platform linux/amd64 \
+#     --build-arg BASE_IMAGE=netboxlabs/orb-agent:latest \
+#     --build-arg NETWORK_DISCOVERY_VERSION=$(cat orb-discovery/network-discovery/version/BUILD_VERSION.txt) \
+#     --build-arg BUILD_COMMIT=$(git rev-parse --short HEAD) \
+#     -t orb-agent:ipam-$(git rev-parse --short HEAD) .
+#
+# Pin BASE_IMAGE to the exact tag or digest the running container uses:
+#
+#   docker inspect --format '{{.Config.Image}} {{index .Image}}' <container>
+#
+# A digest pin (netboxlabs/orb-agent@sha256:...) is preferable to a moving tag,
+# so the overlay cannot silently rebase onto a different agent.
+
+ARG GO_VERSION=1.26.6
+ARG BASE_IMAGE=netboxlabs/orb-agent:latest
+
+########################################################################
+FROM --platform=$BUILDPLATFORM golang:${GO_VERSION}-trixie AS network-discovery
+
+WORKDIR /src/network-discovery
+
+COPY orb-discovery/network-discovery/ .
+
+ARG TARGETOS TARGETARCH
+# Stamp the backend version: its version package go:embeds version/BUILD_*.txt.
+ARG NETWORK_DISCOVERY_VERSION=0.0.0
+ARG BUILD_COMMIT=unknown
+
+# Same flags as the network-discovery stage of the main Dockerfile, so the
+# overlaid binary is byte-comparable with a full build of the same source.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg \
+    echo "${NETWORK_DISCOVERY_VERSION}" > version/BUILD_VERSION.txt && \
+    echo "${BUILD_COMMIT}" > version/BUILD_COMMIT.txt && \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
+    go build -ldflags="-s -w" -trimpath -o /usr/local/bin/network-discovery ./cmd/main.go
+
+########################################################################
+FROM ${BASE_IMAGE} AS final
+
+# The only artifact that changes. It replaces the stock binary at the path the
+# agent resolves through PATH.
+COPY --from=network-discovery /usr/local/bin/network-discovery /usr/local/bin/network-discovery

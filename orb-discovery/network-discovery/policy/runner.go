@@ -47,6 +47,7 @@ type Runner struct {
 	scope     config.Scope
 	config    config.PolicyConfig
 	targets   []targetInfo
+	agentName string
 	runStore  *RunStore
 }
 
@@ -331,6 +332,20 @@ func (r *Runner) run() {
 	}
 	r.logger.Info("discovery complete", "hosts_found", len(result.Hosts), "policy", policyName)
 
+	// Resolve the custom field values once for the whole run so every address
+	// carries the same ${SCAN_TIMESTAMP}. Resolving per address would stamp hosts
+	// discovered seconds apart with different values, and at scale that alone
+	// makes every entity differ from what NetBox holds.
+	customFields, err := config.ResolveCustomFields(r.config.CustomFields, config.CustomFieldTokens{
+		AgentName:  r.agentName,
+		PolicyName: policyName,
+		ScanTime:   config.TruncateScanTime(startTime, r.config.ResolvedTimestampPrecision()),
+	})
+	if err != nil {
+		// One unresolvable value should not cost a scan's worth of addresses.
+		r.logger.Error("skipping custom fields", "error", err, "policy", policyName)
+	}
+
 	// Track discovered hosts
 	processedEntries := make(map[string]bool)
 	var replacedHostnames, refusedHostnames int
@@ -361,7 +376,7 @@ func (r *Runner) run() {
 		}
 		processedEntries[addr] = true
 
-		ip, outcome := r.ipAddressEntity(host, ipAddr, addr, policyName)
+		ip, outcome := r.ipAddressEntity(host, ipAddr, addr, policyName, customFields)
 		switch outcome {
 		case hostnameReplaced:
 			replacedHostnames++
@@ -414,9 +429,18 @@ func (r *Runner) Stop() error {
 }
 
 // ipAddressEntity builds the IP address entity for one scanned host.
-func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr, policyName string) (*diode.IPAddress, hostnameOutcome) {
+func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr, policyName string,
+	customFields map[string]any,
+) (*diode.IPAddress, hostnameOutcome) {
 	ip := &diode.IPAddress{
 		Address: diode.String(ipAddr),
+	}
+	for key, value := range customFields {
+		if err := ip.SetCustomField(key, value); err != nil {
+			// One bad value should not cost the whole address.
+			r.logger.Error("skipping custom field on ip address", "error", err,
+				"custom_field", key, "ip_address", ipAddr, "policy", policyName)
+		}
 	}
 	if r.config.Defaults.Description != "" {
 		ip.Description = diode.String(r.config.Defaults.Description)
