@@ -8,6 +8,9 @@ fields identifying the agent and the scan that produced it.
 Everything here is additive. A policy that sets none of the new keys behaves
 exactly as it did before, and emits `IPAddress` entities alone.
 
+For build and deploy steps, see
+[IPAM_BUILD_RUNBOOK.md](IPAM_BUILD_RUNBOOK.md).
+
 ## Contents
 
 - [What changed](#what-changed)
@@ -44,6 +47,7 @@ exactly as it did before, and emits `IPAddress` entities alone.
 | `agent/docker/Dockerfile.overlay` | New. Rebuilds only network-discovery and lays it over an existing image. |
 | `Makefile` | Adds `make test-network-discovery`. |
 | `docs/IPAM_EXTENSION.md` | This document. |
+| `docs/IPAM_BUILD_RUNBOOK.md` | Build and deploy runbook: image build paths, bootstrap, dry run, go live, rollback. |
 
 Not touched: `device_discovery`, `snmp_discovery`, `gnmi_discovery`, the worker,
 and every other part of the agent.
