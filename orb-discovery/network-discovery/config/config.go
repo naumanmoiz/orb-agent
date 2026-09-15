@@ -73,6 +73,31 @@ type PolicyConfig struct {
 	Schedule *string  `yaml:"schedule,omitempty"`
 	Defaults Defaults `yaml:"defaults"`
 	Timeout  int      `yaml:"timeout"`
+	// CustomFields are NetBox custom field values applied to every IP address
+	// the policy emits. Keys are NetBox custom field names (snake_case, the name
+	// and not the label); the definitions must already exist in NetBox, as Diode
+	// does not create them. Values keep their YAML type, which selects the
+	// matching CustomFieldValue variant.
+	CustomFields map[string]any `yaml:"custom_fields,omitempty"`
+	// TimestampPrecision truncates the ${SCAN_TIMESTAMP} token. A timestamp that
+	// changes on every run makes every entity differ from what NetBox holds, so
+	// the reconciler rewrites all of them on every scan. See ResolvedTimestampPrecision.
+	TimestampPrecision string `yaml:"timestamp_precision,omitempty"`
+}
+
+// ResolvedTimestampPrecision returns the configured ${SCAN_TIMESTAMP} precision,
+// defaulting to "day".
+//
+// The default is deliberately coarse. At nanosecond precision every entity in
+// every run carries a value NetBox has never seen, so the reconciler writes all
+// of them and NetBox records a changelog entry for each. Truncating to the day
+// keeps "when was this last seen" useful while letting an otherwise unchanged
+// address reconcile to a no-op.
+func (c PolicyConfig) ResolvedTimestampPrecision() string {
+	if c.TimestampPrecision == "" {
+		return PrecisionDay
+	}
+	return c.TimestampPrecision
 }
 
 // Policy represents a network-discovery policy
