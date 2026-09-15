@@ -63,8 +63,16 @@ type Scope struct {
 
 // Defaults represents the supported default values for a policy
 type Defaults struct {
-	Vrf         string   `yaml:"vrf,omitempty"`
-	Rd          string   `yaml:"rd,omitempty"`
+	Vrf string `yaml:"vrf,omitempty"`
+	Rd  string `yaml:"rd,omitempty"`
+	// VrfTenant is the tenant on the VRF *reference*, which is not the same as
+	// Tenant: that one lands on the address and the prefix. It exists because
+	// the Diode NetBox plugin picks its VRF matcher from the fields present in
+	// the payload, and only searches tenant-less VRFs when the reference has no
+	// tenant. A prebuilt VRF that has a tenant is therefore invisible to a
+	// name-only reference, and Diode creates a second VRF instead of matching.
+	// Set this to the tenant your prebuilt VRF carries.
+	VrfTenant   string   `yaml:"vrf_tenant,omitempty"`
 	Tenant      string   `yaml:"tenant,omitempty"`
 	Role        string   `yaml:"role,omitempty"`
 	Description string   `yaml:"description,omitempty"`

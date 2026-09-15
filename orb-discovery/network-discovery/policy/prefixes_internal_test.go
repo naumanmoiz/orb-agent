@@ -114,19 +114,47 @@ func TestPrefixVrfReferenceIsNameOnly(t *testing.T) {
 	require.NotNil(t, prefix.Vrf)
 	assert.Equal(t, "LAB-A", *prefix.Vrf.Name)
 	assert.Nil(t, prefix.Vrf.Rd, "an rd the prebuilt VRF lacks stops it matching")
-	assert.Nil(t, prefix.Vrf.Tenant, "a tenant on the VRF switches matching to (name, tenant)")
+	assert.Nil(t, prefix.Vrf.Tenant,
+		"defaults.tenant must not leak onto the VRF: that would switch matching to (name, tenant) "+
+			"and miss a tenant-less prebuilt VRF. vrf_tenant is the opt-in for that.")
 	// The tenant belongs on the prefix, not on the VRF reference.
 	require.NotNil(t, prefix.Tenant)
 	assert.Equal(t, "LAB-A-TENANT", *prefix.Tenant.Name)
 }
 
-// An rd is passed through when set, for a deployment whose prebuilt VRFs carry
-// one, but it is never invented.
-func TestPrefixVrfHonoursAnExplicitRd(t *testing.T) {
-	r := prefixRunner(t, config.Defaults{Vrf: "LAB-A", Rd: "65000:1"}, nestedMap(t))
-	prefix := r.prefixEntities(nil, "p")[0].(*diode.Prefix)
-	require.NotNil(t, prefix.Vrf.Rd)
-	assert.Equal(t, "65000:1", *prefix.Vrf.Rd)
+// The reference must be able to mirror a prebuilt VRF that carries an rd or a
+// tenant. The plugin skips any matcher whose fields are absent from the payload,
+// so a name-only reference can only find a VRF that has neither, and Diode
+// creates a second VRF instead of matching.
+func TestPrefixVrfMirrorsThePrebuiltShape(t *testing.T) {
+	t.Run("rd", func(t *testing.T) {
+		r := prefixRunner(t, config.Defaults{Vrf: "LAB-A", Rd: "65000:1"}, nestedMap(t))
+		vrf := r.prefixEntities(nil, "p")[0].(*diode.Prefix).Vrf
+		require.NotNil(t, vrf.Rd)
+		assert.Equal(t, "65000:1", *vrf.Rd)
+		assert.Nil(t, vrf.Tenant)
+	})
+
+	t.Run("tenant", func(t *testing.T) {
+		// vrf_tenant is separate from defaults.tenant on purpose: that one
+		// describes the prefix and the address, this one makes the VRF match.
+		r := prefixRunner(t, config.Defaults{Vrf: "LAB-A", Tenant: "LAB-A", VrfTenant: "312"}, nestedMap(t))
+		prefix := r.prefixEntities(nil, "p")[0].(*diode.Prefix)
+		require.NotNil(t, prefix.Vrf.Tenant)
+		assert.Equal(t, "312", *prefix.Vrf.Tenant.Name)
+		assert.Equal(t, "LAB-A", *prefix.Tenant.Name, "the prefix keeps its own tenant")
+		assert.Nil(t, prefix.Vrf.Rd)
+	})
+
+	t.Run("address and prefix agree", func(t *testing.T) {
+		r := prefixRunner(t, config.Defaults{Vrf: "LAB-A", VrfTenant: "312"}, nestedMap(t))
+		r.targets = parseTargets([]string{"192.0.2.0/24"})
+		prefix := r.prefixEntities(nil, "p")[0].(*diode.Prefix)
+		ip, _ := r.ipAddressEntity(scannedHost("h.example.net"), "192.0.2.10/25", "192.0.2.10", "p", nil)
+		require.NotNil(t, ip.Vrf.Tenant)
+		assert.Equal(t, *prefix.Vrf.Tenant.Name, *ip.Vrf.Tenant.Name,
+			"a reference that differs between the two would split them across two VRFs")
+	})
 }
 
 // Every entry becomes a prefix in the same VRF, with no parent reference:

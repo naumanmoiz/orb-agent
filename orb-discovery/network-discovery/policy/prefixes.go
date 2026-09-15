@@ -41,7 +41,7 @@ func (b *prefixBuilder) add(entry *config.SubnetMapEntry, customFields map[strin
 	}
 
 	prefix := &diode.Prefix{Prefix: diode.String(cidr)}
-	if vrf := vrfReference(b.defaults.Vrf, b.defaults.Rd); vrf != nil {
+	if vrf := vrfReference(b.defaults.Vrf, b.defaults.Rd, b.defaults.VrfTenant); vrf != nil {
 		prefix.Vrf = vrf
 	}
 	if tenant := firstNonEmpty(entry.Tenant, b.defaults.Prefix.Tenant, b.defaults.Tenant); tenant != "" {
@@ -84,21 +84,34 @@ func (b *prefixBuilder) entities() []diode.Entity { return b.order }
 
 // vrfReference builds the VRF every emitted entity points at.
 //
-// The reference carries the name and nothing else on purpose. The Diode NetBox
-// plugin matches an existing VRF on name alone, and only while its rd and
-// tenant are both null; a reference that adds either one stops matching a
-// prebuilt VRF that lacks them and makes Diode create a second VRF with the
-// same name. Tenant belongs on the prefix and the address, not on the VRF.
+// The reference has to mirror the prebuilt VRF's own shape, because the Diode
+// NetBox plugin chooses its matcher from the fields the payload carries and
+// then restricts the search by them:
 //
-// rd is honoured when set, because a deployment whose prebuilt VRFs do carry an
-// RD needs it to match, but it is the operator's job to make it exact.
-func vrfReference(name, rd string) *diode.VRF {
+//	reference        matcher            searches
+//	name             (name)             VRFs with rd IS NULL and tenant IS NULL
+//	name + tenant    (name, tenant)     VRFs with rd IS NULL and tenant set
+//	name + rd        NetBox's rd unique constraint
+//
+// A criterion whose fields are not all present in the payload is skipped
+// entirely, so a name-only reference can only ever find a VRF that has neither
+// an rd nor a tenant. Point it at a VRF that has either and nothing matches:
+// Diode then creates a second, empty VRF of the same name and reconciles into
+// it, which reads as success while splitting the lab's address space in two.
+//
+// Hence vrf_tenant, which is deliberately separate from defaults.tenant. That
+// one describes the address and the prefix; this one exists only to make the
+// reference match.
+func vrfReference(name, rd, tenant string) *diode.VRF {
 	if name == "" {
 		return nil
 	}
 	vrf := &diode.VRF{Name: diode.String(name)}
 	if rd != "" {
 		vrf.Rd = diode.String(rd)
+	}
+	if tenant != "" {
+		vrf.Tenant = &diode.Tenant{Name: diode.String(tenant)}
 	}
 	return vrf
 }

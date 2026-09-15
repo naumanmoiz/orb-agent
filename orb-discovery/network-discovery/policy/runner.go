@@ -488,7 +488,7 @@ func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr, policyName string
 		hasComments = true
 		ip.Comments = diode.String(r.config.Defaults.Comments)
 	}
-	if vrf := vrfReference(r.config.Defaults.Vrf, r.config.Defaults.Rd); vrf != nil {
+	if vrf := vrfReference(r.config.Defaults.Vrf, r.config.Defaults.Rd, r.config.Defaults.VrfTenant); vrf != nil {
 		ip.Vrf = vrf
 	}
 	if r.config.Defaults.Tenant != "" {

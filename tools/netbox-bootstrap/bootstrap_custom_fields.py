@@ -363,36 +363,64 @@ def _check_choice(nb: "NetBox", name: str, field: dict[str, Any]) -> None:
         print(f"             value {configured!r} is a valid choice")
 
 
-def check_vrfs(nb: "NetBox", names: set[str]) -> None:
-    """Report a VRF the policy names that NetBox does not have.
+def check_vrfs(nb: "NetBox", configured: dict[str, dict[str, str]]) -> None:
+    """Verify every VRF a policy names, and report the config it needs.
 
-    Deliberately never creates one. The Diode NetBox plugin matches a VRF on
-    name alone, and only while its rd and tenant are both null, so a name that
-    does not already exist is silently created by the reconciler as an empty
-    VRF. That looks like it worked and quietly splits a lab's address space
-    across two VRFs, which is the failure this check exists to prevent.
+    Deliberately never creates one. The Diode NetBox plugin chooses its VRF
+    matcher from the fields the payload carries, and skips any criterion whose
+    fields are not all present, so the reference has to mirror the prebuilt
+    VRF's own shape:
+
+        reference      -> searches VRFs with
+        name              rd IS NULL and tenant IS NULL
+        name + tenant     rd IS NULL and tenant set
+        name + rd         NetBox's rd unique constraint
+
+    Point a name-only reference at a VRF that has a tenant or an rd and nothing
+    matches. Diode then creates a second, empty VRF of the same name, which
+    reads as success while splitting the lab's address space in two. This check
+    is the only place that mismatch surfaces before the data lands.
     """
-    if not names:
+    if not configured:
         return
     print("\nvrfs (verified, never created):")
-    for name in sorted(names):
+    for name in sorted(configured):
+        policy = configured[name]
         existing = nb.find("/api/ipam/vrfs/", name=name)
         if not existing:
             problem = (f"VRF {name!r} does not exist. Diode would create an empty one rather than "
-                       "match your prebuilt VRF. Create it in NetBox, or fix defaults.vrf.")
+                       "match a prebuilt VRF. Create it in NetBox, or fix defaults.vrf.")
             nb.problems.append(problem)
             print(f"  ! MISSING {problem}")
             continue
-        rd = existing.get("rd")
-        tenant = existing.get("tenant")
-        note = ""
-        if rd:
-            note = f", rd={rd}: the policy must set defaults.rd to exactly this or it will not match"
-        elif tenant:
-            note = ", which has a tenant: matching is then on (name, tenant)"
-        print(f"  ok       VRF {name} (id={existing['id']}){note}")
-        if rd:
-            nb.problems.append(f"VRF {name} has rd={rd}; set defaults.rd to match, or matching fails")
+
+        actual_rd = existing.get("rd") or ""
+        actual_tenant = (existing.get("tenant") or {}).get("name", "") or ""
+        want_rd = policy.get("rd", "")
+        want_tenant = policy.get("vrf_tenant", "")
+
+        if actual_rd == want_rd and actual_tenant == want_tenant:
+            shape = "name only" if not (actual_rd or actual_tenant) else \
+                ", ".join(filter(None, ["name", f"rd={actual_rd}" if actual_rd else "",
+                                        f"tenant={actual_tenant}" if actual_tenant else ""]))
+            print(f"  ok       VRF {name} (id={existing['id']}), matched on {shape}")
+            continue
+
+        lines = [f"VRF {name} exists (id={existing['id']}) but the policy will not match it."]
+        lines.append(f"    NetBox has: rd={actual_rd or 'null'}, tenant={actual_tenant or 'null'}")
+        lines.append(f"    policy has: rd={want_rd or 'unset'}, vrf_tenant={want_tenant or 'unset'}")
+        lines.append("    Diode would create a SECOND VRF with this name. Set in defaults:")
+        if actual_rd:
+            lines.append(f"      rd: \"{actual_rd}\"")
+        if actual_tenant:
+            lines.append(f"      vrf_tenant: \"{actual_tenant}\"")
+        if not actual_rd and not actual_tenant:
+            lines.append("      (remove rd and vrf_tenant; this VRF matches on name alone)")
+        problem = lines[0]
+        nb.problems.append(problem)
+        print(f"  ! MISMATCH {lines[0]}")
+        for extra in lines[1:]:
+            print(f"        {extra}")
 
 
 def check_roles(nb: "NetBox", names: set[str]) -> None:
@@ -443,7 +471,7 @@ def _value_hint(netbox_type: str) -> str:
     return hints.get(netbox_type, "")
 
 
-def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], set[str], set[str]]:
+def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], dict[str, dict[str, str]], set[str]]:
     """Read the custom field names a config names, with the type each will carry.
 
     Reads both the agent-level shape (orb.policies.network_discovery.<name>) and
@@ -465,7 +493,7 @@ def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], set[
 
     custom_fields = dict(BASE_CUSTOM_FIELDS)
     values: dict[str, Any] = {}
-    vrfs: set[str] = set()
+    vrfs: dict[str, dict[str, str]] = {}
     roles: set[str] = set()
     conflicts: dict[str, set[str]] = {}
     for policy in policies.values():
@@ -473,7 +501,10 @@ def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], set[
         scope = (policy or {}).get("scope") or {}
         defaults = config.get("defaults") or {}
         if defaults.get("vrf"):
-            vrfs.add(defaults["vrf"])
+            vrfs[defaults["vrf"]] = {
+                "rd": defaults.get("rd", "") or "",
+                "vrf_tenant": defaults.get("vrf_tenant", "") or "",
+            }
         if (defaults.get("prefix") or {}).get("role"):
             roles.add(defaults["prefix"]["role"])
         for entry in scope.get("subnet_map") or []:
@@ -520,7 +551,7 @@ def main() -> int:
         parser.error("NETBOX_URL and NETBOX_TOKEN must be set, or passed with --url/--token")
 
     expected_values: dict[str, Any] = {}
-    vrfs: set[str] = set()
+    vrfs: dict[str, dict[str, str]] = {}
     roles: set[str] = set()
     if args.config:
         custom_fields, expected_values, vrfs, roles = collect_from_config(args.config)

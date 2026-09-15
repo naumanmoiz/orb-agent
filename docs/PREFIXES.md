@@ -27,42 +27,58 @@ section matters more than anything else here.
 
 ## VRFs are matched, never created
 
-The Diode NetBox plugin matches an existing VRF on **name alone**, and only
-while its `rd` and `tenant` are both null:
+The Diode NetBox plugin picks its VRF matcher from the fields the **payload**
+carries, and skips any criterion whose fields are not all present. So the
+reference has to mirror the shape of the VRF you already have:
 
-```python
-"ipam.vrf": [
-    ObjectMatchCriteria(fields=("name",),           condition=Q(rd__isnull=True, tenant__isnull=True)),
-    ObjectMatchCriteria(fields=("name", "tenant"),  condition=Q(rd__isnull=True, tenant__isnull=False)),
-]
+| Reference carries | Searches VRFs where |
+|---|---|
+| `name` | `rd IS NULL` and `tenant IS NULL` |
+| `name` + `tenant` | `rd IS NULL` and `tenant` set |
+| `name` + `rd` | NetBox's own `rd` unique constraint |
+
+Point a name-only reference at a VRF that has a tenant or an RD and **nothing
+matches**. Diode then creates a second, empty VRF of the same name and
+reconciles into it. That reads as success while splitting the lab's address
+space across two VRFs.
+
+Three keys control the reference:
+
+```yaml
+defaults:
+  vrf: VRF-Lab-312      # the name
+  rd: "65000:9"         # only if the prebuilt VRF has an RD
+  vrf_tenant: "312"     # only if the prebuilt VRF has a tenant
+  tenant: LAB-312       # unrelated: this is the prefix's and address's tenant
 ```
 
-Two consequences, both easy to get wrong:
-
-1. **The reference must carry the name and nothing else.** The agent emits
-   `{"vrf": {"name": "LAB-A"}}` deliberately. Adding a tenant switches matching
-   to `(name, tenant)`, and a prebuilt VRF without that tenant stops matching.
-   The tenant goes on the prefix and the address instead.
-2. **A name that does not exist is not an error.** Diode creates an empty VRF
-   and reconciles into it. That looks like success while quietly splitting a
-   lab's address space across two VRFs.
+`vrf_tenant` and `tenant` are deliberately separate. `tenant` describes the
+prefix and the address. `vrf_tenant` exists only to make the VRF reference
+match, and setting `tenant` alone will not do it.
 
 There is no "match only, do not create" flag in the Diode protocol, so the guard
-is a preflight check. `bootstrap_custom_fields.py` verifies every `defaults.vrf`
-exists and **never creates one**:
+is the preflight, which verifies and **never creates**. It reads the real VRF
+and prints the config it needs:
 
 ```
 vrfs (verified, never created):
-  ok       VRF LAB-A (id=12)
-  ! MISSING VRF 'LAB-B' does not exist. Diode would create an empty one rather
-            than match your prebuilt VRF. Create it in NetBox, or fix defaults.vrf.
+  ok       VRF VRF-Plain (id=1), matched on name only
+  ! MISMATCH VRF VRF-Lab-312 exists (id=2) but the policy will not match it.
+            NetBox has: rd=null, tenant=312
+            policy has: rd=unset, vrf_tenant=unset
+            Diode would create a SECOND VRF with this name. Set in defaults:
+              vrf_tenant: "312"
+  ! MISSING VRF 'VRF-Nope' does not exist. Diode would create an empty one...
 ```
 
-It exits non-zero on a miss, so it can gate a deploy.
+It exits non-zero, so it can gate a deploy. Run it before every rollout: this is
+the failure that looks like success.
 
-If your prebuilt VRFs carry an **RD**, set `defaults.rd` to exactly that value.
-The script reports the RD it found so you can match it. A mismatched RD does not
-match and creates a duplicate.
+### If duplicates already exist
+
+Merge them in NetBox by hand. Move any prefixes and addresses off the
+agent-created VRF onto the prebuilt one, delete the empty duplicate, then fix
+`defaults` per the preflight output so the next scan matches.
 
 ## Config
 
@@ -97,7 +113,7 @@ attribute silently.
 | `prefix` | string | yes | CIDR. Host bits are normalized onto the network address, with a warning |
 | `status` | string | no | `container`, `active`, `reserved`, `deprecated` |
 | `role` | string | no | An `ipam.Role` by name. Overrides `defaults.prefix.role` |
-| `tenant` | string | no | Overrides `defaults.prefix.tenant`, then `defaults.tenant` |
+| `tenant` | string | no | Overrides `defaults.prefix.tenant`, then `defaults.tenant`. Not the VRF's tenant; see `vrf_tenant` |
 | `description` | string | no | |
 | `is_pool` | bool | no | Tri-state: an explicit `false` is sent, an absent key is not |
 | `mark_utilized` | bool | no | Same |

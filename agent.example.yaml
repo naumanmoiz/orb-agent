@@ -40,6 +40,13 @@ orb:
             # an empty VRF rather than failing. Verify with the bootstrap script
             # before deploying.
             vrf: LAB-AUS-01
+            # Set these ONLY to mirror what the prebuilt VRF already has. The
+            # Diode NetBox plugin picks its matcher from the fields present, so
+            # a name-only reference only ever finds a VRF with no rd and no
+            # tenant; against one that has either, Diode creates a duplicate.
+            # The bootstrap script reads the real VRF and prints what to set.
+            # rd: "65000:9"
+            # vrf_tenant: "LAB-AUS-01"
             tenant: LAB-AUS-01
             description: "Discovered by orb network_discovery"
             tags: [orb, network-discovery]
