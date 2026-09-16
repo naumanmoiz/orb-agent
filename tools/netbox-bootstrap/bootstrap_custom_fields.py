@@ -408,7 +408,7 @@ def _check_choice(nb: "NetBox", name: str, field: dict[str, Any]) -> None:
         print(f"             value {configured!r} is a valid choice")
 
 
-def check_vrfs(nb: "NetBox", configured: dict[str, dict[str, str]]) -> None:
+def check_vrfs(nb: "NetBox", configured: dict[str, dict[str, str]]) -> dict[str, int]:
     """Verify every VRF a policy names, and report the config it needs.
 
     Deliberately never creates one. The Diode NetBox plugin chooses its VRF
@@ -426,12 +426,17 @@ def check_vrfs(nb: "NetBox", configured: dict[str, dict[str, str]]) -> None:
     reads as success while splitting the lab's address space in two. This check
     is the only place that mismatch surfaces before the data lands.
     """
+    found: dict[str, int] = {}
     if not configured:
-        return
+        return found
     print("\nvrfs (verified, never created):")
     for name in sorted(configured):
         policy = configured[name]
         existing = nb.find("/api/ipam/vrfs/", name=name)
+        if existing:
+            # Kept for check_prefixes: a prefix can only be looked up by VRF id,
+            # never by VRF name. See the note there.
+            found[name] = existing["id"]
         if not existing:
             problem = (f"VRF {name!r} does not exist. Diode would create an empty one rather than "
                        "match a prebuilt VRF. Create it in NetBox, or fix defaults.vrf.")
@@ -466,6 +471,7 @@ def check_vrfs(nb: "NetBox", configured: dict[str, dict[str, str]]) -> None:
         print(f"  ! MISMATCH {lines[0]}")
         for extra in lines[1:]:
             print(f"        {extra}")
+    return found
 
 
 def check_tenants(nb: "NetBox", configured: dict[str, str]) -> None:
@@ -666,7 +672,7 @@ def add_vrf(vrfs: dict[str, dict[str, str]], name: str, rd: Any, vrf_tenant: Any
     vrfs[name] = shape
 
 
-def check_prefixes(nb: "NetBox", declared: list[tuple[str, str]]) -> None:
+def check_prefixes(nb: "NetBox", declared: list[tuple[str, str]], vrf_ids: dict[str, int]) -> None:
     """Report which declared prefixes NetBox already holds, and which it does not.
 
     Not a pass/fail check: creating a prefix that does not exist is the point of
@@ -678,14 +684,28 @@ def check_prefixes(nb: "NetBox", declared: list[tuple[str, str]]) -> None:
     Matched the way the plugin matches: on (prefix, vrf). A prefix with no VRF
     is matched globally by CIDR, so a VRF-less entry can silently adopt another
     lab's prefix — reported as such.
+
+    The VRF is passed as vrf_id, resolved from the name by check_vrfs, because
+    NetBox's prefix filter named `vrf` matches on the VRF's **route
+    distinguisher**, not its name (it is a ModelMultipleChoiceFilter with
+    to_field_name="rd", labelled "VRF (RD)"). Sending a name there is rejected
+    with "Select a valid choice. <name> is not one of the available choices",
+    and for a VRF with no RD — the common case, and the shape this agent matches
+    on name alone — there is no value that would ever have worked. vrf_id is
+    unambiguous and does not care whether an RD exists.
     """
     if not declared:
         return
     print("\nsubnet_map prefixes (created only when missing):")
     for cidr, vrf in sorted(set(declared)):
-        query = {"prefix": cidr}
+        query: dict[str, Any] = {"prefix": cidr}
         if vrf:
-            query["vrf"] = vrf
+            if vrf not in vrf_ids:
+                # check_vrfs already reported this as MISSING and recorded the
+                # problem. Guessing at the prefix would add noise, not news.
+                print(f"  ?        prefix {cidr}: cannot check, VRF {vrf} does not exist (reported above)")
+                continue
+            query["vrf_id"] = vrf_ids[vrf]
         else:
             query["vrf_id"] = "null"
         existing = nb.find("/api/ipam/prefixes/", **query)
@@ -749,10 +769,10 @@ def main() -> int:
     for name in sorted(custom_fields):
         ensure_custom_field(nb, name, custom_fields[name])
 
-    check_vrfs(nb, vrfs)
+    vrf_ids = check_vrfs(nb, vrfs)
     check_tenants(nb, tenants)
     check_roles(nb, roles)
-    check_prefixes(nb, prefixes)
+    check_prefixes(nb, prefixes, vrf_ids)
 
     if args.dry_run and nb.planned:
         print(f"\ndry run summary: {len(nb.planned)} change(s) would be made")
