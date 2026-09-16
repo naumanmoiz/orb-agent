@@ -582,15 +582,25 @@ def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], dict
             if not (isinstance(value, str) and value.startswith("${")):
                 values[name] = value
 
+    # str() before sorting, deliberately. These sets are built from values a
+    # config supplied, so a YAML type nobody anticipated can land in one, and
+    # sorted() on a mixed set raises TypeError. Crashing here would be the worst
+    # possible place: this loop exists to report a config problem, so a traceback
+    # replaces the diagnosis with a stack trace pointing at the messenger.
     for name, types in conflicts.items():
-        print(f"  ! policies disagree on custom field {name}: {', '.join(sorted(types))}. "
+        print(f"  ! policies disagree on custom field {name}: {_join(types)}. "
               "One NetBox field cannot be both.", file=sys.stderr)
     for name, shapes in vrf_conflicts.items():
         # At most one of the shapes can match the real VRF; the other creates a
         # duplicate of the same name, silently.
-        print(f"  ! policies describe {name} two ways: {'; '.join(sorted(shapes))}. "
+        print(f"  ! policies describe {name} two ways: {_join(shapes, '; ')}. "
               "Only one can match the VRF that exists.", file=sys.stderr)
     return custom_fields, values, vrfs, tenants, roles, prefixes
+
+
+def _join(values: "set[Any]", separator: str = ", ") -> str:
+    """Render a set of reported values, whatever types it ended up holding."""
+    return separator.join(sorted(str(value) for value in values))
 
 
 def add_vrf(vrfs: dict[str, dict[str, str]], name: str, rd: Any, vrf_tenant: Any,
