@@ -535,7 +535,9 @@ def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], dict
     vrfs: dict[str, dict[str, str]] = {}
     tenants: dict[str, str] = {}
     roles: set[str] = set()
+    prefixes: list[tuple[str, str]] = []
     conflicts: dict[str, set[str]] = {}
+    vrf_conflicts: dict[str, set[str]] = {}
     for policy in policies.values():
         config = (policy or {}).get("config") or {}
         scope = (policy or {}).get("scope") or {}
@@ -544,21 +546,27 @@ def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], dict
         for key in ("tenant", "vrf_tenant"):
             if defaults.get(key):
                 tenants[defaults[key]] = group
-        for entry in scope.get("subnet_map") or []:
-            if entry.get("tenant"):
-                tenants[entry["tenant"]] = group
         if (defaults.get("prefix") or {}).get("tenant"):
             tenants[defaults["prefix"]["tenant"]] = group
         if defaults.get("vrf"):
-            vrfs[defaults["vrf"]] = {
-                "rd": defaults.get("rd", "") or "",
-                "vrf_tenant": defaults.get("vrf_tenant", "") or "",
-            }
+            add_vrf(vrfs, defaults["vrf"], defaults.get("rd"), defaults.get("vrf_tenant"), vrf_conflicts)
         if (defaults.get("prefix") or {}).get("role"):
             roles.add(defaults["prefix"]["role"])
         for entry in scope.get("subnet_map") or []:
+            # An entry's vrf brings its own rd and vrf_tenant; it never inherits
+            # the defaults', because the three describe one VRF and a mixed
+            # reference matches none. The agent enforces the same rule.
+            entry_group = entry.get("tenant_group", "") or group
+            if entry.get("vrf"):
+                add_vrf(vrfs, entry["vrf"], entry.get("rd"), entry.get("vrf_tenant"), vrf_conflicts)
+                if entry.get("vrf_tenant"):
+                    tenants[entry["vrf_tenant"]] = entry_group
+            if entry.get("tenant"):
+                tenants[entry["tenant"]] = entry_group
             if entry.get("role"):
                 roles.add(entry["role"])
+            if entry.get("prefix"):
+                prefixes.append((entry["prefix"], entry.get("vrf") or defaults.get("vrf") or ""))
             for name, value in (entry.get("custom_fields") or {}).items():
                 custom_fields.setdefault(name, infer_field_type(value))
                 values.setdefault(name, value)
@@ -577,7 +585,65 @@ def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], dict
     for name, types in conflicts.items():
         print(f"  ! policies disagree on custom field {name}: {', '.join(sorted(types))}. "
               "One NetBox field cannot be both.", file=sys.stderr)
-    return custom_fields, values, vrfs, tenants, roles
+    for name, shapes in vrf_conflicts.items():
+        # At most one of the shapes can match the real VRF; the other creates a
+        # duplicate of the same name, silently.
+        print(f"  ! policies describe {name} two ways: {'; '.join(sorted(shapes))}. "
+              "Only one can match the VRF that exists.", file=sys.stderr)
+    return custom_fields, values, vrfs, tenants, roles, prefixes
+
+
+def add_vrf(vrfs: dict[str, dict[str, str]], name: str, rd: Any, vrf_tenant: Any,
+            vrf_conflicts: dict[str, set[str]]) -> None:
+    """Record one VRF reference, flagging two policies that describe it differently.
+
+    A VRF name reached with two different (rd, vrf_tenant) shapes cannot be
+    right for both: at most one shape matches the real VRF, and the other
+    creates a duplicate.
+    """
+    shape = {"rd": rd or "", "vrf_tenant": vrf_tenant or ""}
+    existing = vrfs.get(name)
+    if existing is not None and existing != shape:
+        vrf_conflicts.setdefault(f"VRF {name}", set()).update(
+            f"rd={shape_fields['rd'] or 'unset'}, vrf_tenant={shape_fields['vrf_tenant'] or 'unset'}"
+            for shape_fields in (existing, shape))
+        return
+    vrfs[name] = shape
+
+
+def check_prefixes(nb: "NetBox", declared: list[tuple[str, str]]) -> None:
+    """Report which declared prefixes NetBox already holds, and which it does not.
+
+    Not a pass/fail check: creating a prefix that does not exist is the point of
+    subnet_map. It is here because "created only when missing" is a claim an
+    operator should be able to see rather than take on trust, and because a
+    prefix listed as missing that the operator believes exists is the visible
+    end of a VRF reference that will not match.
+
+    Matched the way the plugin matches: on (prefix, vrf). A prefix with no VRF
+    is matched globally by CIDR, so a VRF-less entry can silently adopt another
+    lab's prefix — reported as such.
+    """
+    if not declared:
+        return
+    print("\nsubnet_map prefixes (created only when missing):")
+    for cidr, vrf in sorted(set(declared)):
+        query = {"prefix": cidr}
+        if vrf:
+            query["vrf"] = vrf
+        else:
+            query["vrf_id"] = "null"
+        existing = nb.find("/api/ipam/prefixes/", **query)
+        where = f"in VRF {vrf}" if vrf else "with no VRF (matched globally by CIDR)"
+        if existing:
+            print(f"  ok       prefix {cidr} exists {where} (id={existing['id']}); it will be updated, not created")
+        else:
+            print(f"  + create prefix {cidr} does not exist {where}; Diode will create it")
+            if not vrf:
+                nb.problems.append(
+                    f"prefix {cidr} is declared with no VRF. It is matched globally by CIDR, so two "
+                    "labs sharing address space collapse onto one NetBox prefix. Set defaults.vrf, "
+                    "or the entry's own vrf.")
 
 
 def main() -> int:
@@ -603,8 +669,9 @@ def main() -> int:
     vrfs: dict[str, dict[str, str]] = {}
     tenants: dict[str, str] = {}
     roles: set[str] = set()
+    prefixes: list[tuple[str, str]] = []
     if args.config:
-        custom_fields, expected_values, vrfs, tenants, roles = collect_from_config(args.config)
+        custom_fields, expected_values, vrfs, tenants, roles, prefixes = collect_from_config(args.config)
     else:
         custom_fields = dict(BASE_CUSTOM_FIELDS)
 
@@ -629,6 +696,7 @@ def main() -> int:
     check_vrfs(nb, vrfs)
     check_tenants(nb, tenants)
     check_roles(nb, roles)
+    check_prefixes(nb, prefixes)
 
     if args.dry_run and nb.planned:
         print(f"\ndry run summary: {len(nb.planned)} change(s) would be made")
