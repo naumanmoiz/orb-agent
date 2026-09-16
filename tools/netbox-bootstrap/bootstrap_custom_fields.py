@@ -11,7 +11,7 @@ and --dry-run reports what it would change without writing.
 
 Usage:
     export NETBOX_URL=https://netbox.example.net
-    export NETBOX_TOKEN=...
+    export NETBOX_TOKEN=...              # or "Bearer nbt_..." / "Token ..."
     python3 bootstrap_custom_fields.py --config ../../agent.example.yaml --dry-run
     python3 bootstrap_custom_fields.py --config ../../agent.example.yaml
 
@@ -56,6 +56,42 @@ BASE_CUSTOM_FIELDS: dict[str, str] = {
 IPAM_OBJECT_TYPES = ["ipam.ipaddress", "ipam.prefix"]
 
 
+# Authorization schemes NetBox issues. Order matters only for the error text.
+AUTH_SCHEMES = ("Token", "Bearer")
+
+
+def split_auth(token: str, scheme: str) -> tuple[str, str, bool]:
+    """Return (scheme, bare token, scheme_came_from_token) for the header.
+
+    A token is very often exported with its scheme already attached, because
+    that is exactly what the header looks like and what every curl example
+    shows:
+
+        export NETBOX_TOKEN="Bearer nbt_1234..."
+
+    Prepending another scheme then produces "Authorization: Token Bearer
+    nbt_1234...". NetBox does not report that as a malformed header — it reports
+    an invalid token, so it reads like a wrong or expired credential and sends
+    you looking in the wrong place. Worse, --auth-scheme Bearer, the obvious
+    thing to reach for, makes it "Bearer Bearer ..." and changes nothing.
+
+    So a scheme already on the token wins: the operator wrote the header value
+    they wanted. It is echoed at startup rather than applied silently, since
+    disagreeing with an explicit --auth-scheme should be visible.
+
+    Also strips surrounding whitespace, which a token read from a file or a
+    here-doc usually carries as a trailing newline and which makes the header
+    invalid in a way nothing else here would explain.
+    """
+    token = token.strip()
+    head, _, rest = token.partition(" ")
+    rest = rest.strip()
+    for known in AUTH_SCHEMES:
+        if head.lower() == known.lower() and rest:
+            return known, rest, True
+    return scheme, token, False
+
+
 class NetBox:
     """Minimal NetBox REST client scoped to custom fields."""
 
@@ -63,11 +99,11 @@ class NetBox:
                  auth_scheme: str = "Token") -> None:
         self.url = url.rstrip("/")
         self.dry_run = dry_run
-        self.auth_scheme = auth_scheme
+        self.auth_scheme, token, self.scheme_from_token = split_auth(token, auth_scheme)
         self.session = requests.Session()
         self.session.verify = verify
         self.session.headers.update({
-            "Authorization": f"{auth_scheme} {token}",
+            "Authorization": f"{self.auth_scheme} {token}",
             "Accept": "application/json",
             "Content-Type": "application/json",
         })
@@ -129,12 +165,18 @@ class NetBox:
 
             lowered = detail.lower()
             if "token" in lowered or response.status_code == 401:
+                source = "taken from the token value" if self.scheme_from_token else "the default or --auth-scheme"
                 lines += [
                     "  The token is missing, mistyped, expired, or restricted to other source IPs.",
                     "  Check it is set and not truncated:  echo \"${NETBOX_TOKEN:0:8}...\"",
-                    f"  This request used the {self.auth_scheme} scheme. If your deployment issues",
-                    "  bearer tokens (an nbt_ prefix is a hint), re-run with --auth-scheme Bearer.",
+                    f"  This request sent: Authorization: {self.auth_scheme} <token>  ({source}).",
                 ]
+                others = [s for s in AUTH_SCHEMES if s != self.auth_scheme]
+                if others and not self.scheme_from_token:
+                    lines.append(
+                        f"  If your deployment issues {others[0].lower()} tokens (an nbt_ prefix is a hint), "
+                        f"re-run with --auth-scheme {others[0]}."
+                    )
             else:
                 lines += [
                     "  The token authenticated but lacks permission on custom fields.",
@@ -142,9 +184,12 @@ class NetBox:
                     "  extras.change_customfield unless you only ever use --dry-run), or use a",
                     "  token belonging to a superuser.",
                 ]
+            # $NETBOX_TOKEN may already carry the scheme, in which case repeating
+            # it here would reproduce the very double-scheme header this avoids.
+            credential = "$NETBOX_TOKEN" if self.scheme_from_token else f"{self.auth_scheme} $NETBOX_TOKEN"
             lines.append(
                 "  Confirm independently:\n"
-                f"    curl -sS -H \"Authorization: Token $NETBOX_TOKEN\" {self.url}/api/extras/custom-fields/ | head -c 300"
+                f"    curl -sS -H \"Authorization: {credential}\" {self.url}/api/extras/custom-fields/ | head -c 300"
             )
             raise SystemExit("\n".join(lines))
         if not response.ok:
@@ -694,7 +739,8 @@ def main() -> int:
     nb = NetBox(args.url, args.token, args.dry_run, verify=not args.insecure,
                 auth_scheme=args.auth_scheme)
     nb.expected_values = expected_values
-    print(f"NetBox {nb.version or 'unknown version'} at {nb.url} (auth: {nb.auth_scheme})")
+    scheme_note = f"{nb.auth_scheme}, from the token value" if nb.scheme_from_token else nb.auth_scheme
+    print(f"NetBox {nb.version or 'unknown version'} at {nb.url} (auth: {scheme_note})")
     print(f"custom field object types key: {nb.object_types_field}")
     if args.dry_run:
         print("dry run: nothing will be written\n")

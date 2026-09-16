@@ -136,7 +136,23 @@ certificate.
 
 The default Authorization scheme is `Token`, which is what stock NetBox expects.
 If your deployment issues bearer tokens, pass `--auth-scheme Bearer` or set
-`NETBOX_AUTH_SCHEME`. The distinction matters: NetBox rejects a credential whose
+`NETBOX_AUTH_SCHEME`.
+
+You can also just put the scheme in the token, which is how most people have it
+to hand, since it is what the header and every curl example look like:
+
+```bash
+export NETBOX_TOKEN="Bearer nbt_1234..."   # no --auth-scheme needed
+```
+
+A scheme already on the token wins over the flag and the default, rather than
+being prepended to. The startup line says which one was used and where it came
+from, so `auth: Bearer, from the token value` confirms it took. Surrounding
+whitespace is stripped too — a token read from a file usually carries a trailing
+newline, which makes the header invalid in a way nothing else here would
+explain.
+
+The scheme distinction matters: NetBox rejects a credential whose
 scheme it recognises but whose value it cannot verify, giving a 403, while it
 ignores a scheme it does not recognise and falls through to anonymous access. So
 the same token can appear to work with one scheme and 403 with the other, and
