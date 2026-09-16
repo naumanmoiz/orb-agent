@@ -155,3 +155,56 @@ func TestMergeCustomFields(t *testing.T) {
 
 	assert.Equal(t, base, config.MergeCustomFields(base, nil))
 }
+
+// rd and vrf_tenant describe the VRF named alongside them. On an entry with no
+// vrf of its own they would be silently dropped, and a dropped rd is the
+// difference between matching a prebuilt VRF and Diode creating a second one.
+func TestSubnetMapRejectsVrfFieldsWithoutVrf(t *testing.T) {
+	err := config.ValidateSubnetMap([]config.SubnetMapEntry{
+		{Prefix: "192.0.2.0/24", Rd: "65000:9"},
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rd is set without vrf")
+
+	err = config.ValidateSubnetMap([]config.SubnetMapEntry{
+		{Prefix: "192.0.2.0/24", VrfTenant: "Labs"},
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "vrf_tenant is set without vrf")
+
+	// With a vrf of its own, both are what make the reference match.
+	require.NoError(t, config.ValidateSubnetMap([]config.SubnetMapEntry{
+		{Prefix: "192.0.2.0/24", Vrf: "LAB", Rd: "65000:9", VrfTenant: "Labs"},
+	}, nil))
+}
+
+// The same CIDR really can exist in two VRFs, but a scan cannot tell which one
+// answered, so one policy cannot carry both.
+func TestSubnetMapRejectsDuplicateAcrossVrfs(t *testing.T) {
+	err := config.ValidateSubnetMap([]config.SubnetMapEntry{
+		{Prefix: "192.0.2.0/24", Vrf: "CORP"},
+		{Prefix: "192.0.2.0/24", Vrf: "LAB"},
+	}, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "give each VRF its own policy")
+}
+
+// Per-entry placement keys are known keys, so a config using them is not
+// rejected by the unknown-key guard.
+func TestSubnetMapAcceptsPlacementKeys(t *testing.T) {
+	var entries []config.SubnetMapEntry
+	require.NoError(t, yaml.Unmarshal([]byte(`
+- prefix: 192.0.2.0/24
+  vrf: CORP
+  rd: "65000:1"
+  vrf_tenant: Corp
+  tenant: Corp
+  tenant_group: Internal
+`), &entries))
+	require.Len(t, entries, 1)
+	assert.Equal(t, "CORP", entries[0].Vrf)
+	assert.Equal(t, "65000:1", entries[0].Rd)
+	assert.Equal(t, "Corp", entries[0].VrfTenant)
+	assert.Equal(t, "Corp", entries[0].Tenant)
+	assert.Equal(t, "Internal", entries[0].TenantGroup)
+}

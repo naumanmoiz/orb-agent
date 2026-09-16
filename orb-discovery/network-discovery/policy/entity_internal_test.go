@@ -33,7 +33,7 @@ func commentsOf(t *testing.T, comments *string) config.HostMetadata {
 // hostnames list empty as it always was.
 func TestIPAddressEntityKeepsAReplacedNameInTheComments(t *testing.T) {
 	r := &Runner{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	ip, outcome := r.ipAddressEntity(scannedHost("abc1234-vendor*model*unit.example.net"), "192.0.2.10/24", "192.0.2.10", "p", nil)
+	ip, outcome := r.ipAddressEntity(scannedHost("abc1234-vendor*model*unit.example.net"), "192.0.2.10/24", "192.0.2.10", nil, "p", nil)
 	assert.Equal(t, hostnameReplaced, outcome)
 	assert.Equal(t, "abc1234-vendor-model-unit.example.net", *ip.DnsName)
 	metadata := commentsOf(t, ip.Comments)
@@ -42,7 +42,7 @@ func TestIPAddressEntityKeepsAReplacedNameInTheComments(t *testing.T) {
 	require.Len(t, metadata.Ports, 1)
 	assert.Equal(t, 22, metadata.Ports[0].Number)
 
-	ip, outcome = r.ipAddressEntity(scannedHost("clean.example.net"), "192.0.2.11/24", "192.0.2.11", "p", nil)
+	ip, outcome = r.ipAddressEntity(scannedHost("clean.example.net"), "192.0.2.11/24", "192.0.2.11", nil, "p", nil)
 	assert.Equal(t, hostnameUnchanged, outcome)
 	assert.Nil(t, commentsOf(t, ip.Comments).Hostnames)
 }
@@ -51,7 +51,7 @@ func TestIPAddressEntityKeepsAReplacedNameInTheComments(t *testing.T) {
 // replaced name is not recorded anywhere in the entity.
 func TestIPAddressEntityLeavesThePolicysCommentsAlone(t *testing.T) {
 	r := &Runner{logger: slog.New(slog.NewTextHandler(io.Discard, nil)), config: config.PolicyConfig{Defaults: config.Defaults{Comments: "owned by the policy"}}}
-	ip, outcome := r.ipAddressEntity(scannedHost("abc*unit.example.net"), "192.0.2.12/24", "192.0.2.12", "p", nil)
+	ip, outcome := r.ipAddressEntity(scannedHost("abc*unit.example.net"), "192.0.2.12/24", "192.0.2.12", nil, "p", nil)
 	assert.Equal(t, hostnameReplaced, outcome)
 	assert.Equal(t, "abc-unit.example.net", *ip.DnsName)
 	require.NotNil(t, ip.Comments)

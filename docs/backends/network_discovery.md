@@ -11,6 +11,11 @@ IP addresses support VRF, Tenant, Role, Description, Comments and Tags via `defa
 and NetBox custom fields via `config.custom_fields`. See
 [docs/CUSTOM_FIELDS.md](../CUSTOM_FIELDS.md).
 
+`defaults` is the policy-wide fallback. A `scope.subnet_map` entry that names its
+own `vrf` or `tenant` overrides it for its prefix and for every address
+discovered inside that subnet, so a single policy can file discoveries into
+several prebuilt VRFs and tenants. See [docs/PREFIXES.md](../PREFIXES.md).
+
 The name a reverse lookup returns for an address becomes the IP's `dns_name`,
 lowercased. NetBox accepts only letters, digits, hyphens and underscores in a
 label. nmap, which does the lookup, prints an asterisk in place of any
@@ -62,7 +67,7 @@ Config defines data for the whole scope and is optional overall.
 | defaults | map | no  |  key value pair that defines default values  |
 | timeout | int | no | Timeout in minutes for the nmap scan operation. The default value is 5 minutes.
 | custom_fields | map | no | NetBox custom field values applied to every emitted IP address. The definitions must already exist in NetBox on `ipam.ipaddress`. See [docs/CUSTOM_FIELDS.md](../CUSTOM_FIELDS.md). |
-| subnet_map (scope) | list | no | Subnets to create as NetBox prefixes. Each discovered address takes the mask of the most specific entry containing it. See [docs/PREFIXES.md](../PREFIXES.md). |
+| subnet_map (scope) | list | no | Subnets to create as NetBox prefixes. Each discovered address takes the mask of the most specific entry containing it, and is placed in that entry's VRF and tenant, so one policy can cover several VRFs. See [docs/PREFIXES.md](../PREFIXES.md). |
 | timestamp_precision | str | no | How much of `${SCAN_TIMESTAMP}` is kept: `nanosecond`, `second`, `minute`, `hour` or `day` (default). Coarser precision lets an unchanged address reconcile to a no-op instead of being rewritten every scan. |
 
 #### Defaults
@@ -72,6 +77,8 @@ Current supported defaults:
 |:-----:|:----:|:-------------:|
 | vrf | str | VRF name to assign to discovered IP addresses |
 | rd | str | Route Distinguisher (RD) for the VRF (only used when `vrf` is set). Optional — when omitted the VRF is emitted without an RD so NetBox can match an existing VRF whose `rd` is null. |
+| vrf_tenant | str | Tenant on the **VRF reference**, set only to mirror a prebuilt VRF that has one. Distinct from `tenant`: it exists to make the VRF match, not to describe the address. See [docs/PREFIXES.md](../PREFIXES.md). |
+| tenant_group | str | Group the referenced tenants belong to. NetBox makes Tenant unique on `(group, name)`, so a group-less reference cannot find a grouped tenant and Diode creates a duplicate outside the group. |
 | tenant | str | Tenant name to assign to discovered IP addresses |
 | role | str | Role to assign to discovered IP addresses |
 | comments | str | NetBox Comments information to be added to discovered IP |
@@ -96,7 +103,7 @@ The scope defines a list of targets to be scanned.
 | scan_types | list | no | Scan technique to be used by NMAP. Supports [udp,connect,syn,ack,window,null,fin,xmas,maimon,sctp_init,sctp_cookie_echo,ip_protocol]. If more than one TCP scan type (`connect,syn,ack,window,null,fin,xmas,maimon`) is defined, only the fist one will be applied. |
 | dns_servers | list | no | Specify alternate DNS servers for DNS resolution (--dns-servers). |
 | os_detection | bool | no | Enables NMAP OS detection (-O). |
-| use_target_masks | bool | no | When enabled (default: True), applies the most specific subnet mask from the defined targets to discovered IPs. Only affects targets defined as subnets (e.g., 192.168.1.0/24), not ranges or individual IPs. |
+| use_target_masks | bool | no | When enabled (default: True), applies the most specific subnet mask from the defined targets to discovered IPs. Only affects targets defined as subnets (e.g., 192.168.1.0/24), not ranges or individual IPs. A `subnet_map` entry outranks this: it declares what the prefix is rather than inferring it from what was scanned, so an address inside one takes the declared mask either way. |
 | icmp_echo      | bool | no | Enables ICMP Echo discovery (-PE). Sends ICMP Echo Request (ping) probes to detect live hosts. |
 | icmp_timestamp | bool | no | Enables ICMP Timestamp discovery (-PP). Uses ICMP Timestamp Requests to discover hosts that respond to this type of probe. |
 | icmp_netmask   | bool | no | Enables ICMP Netmask discovery (-PM). Sends ICMP Address Mask Request packets to identify responsive hosts. |

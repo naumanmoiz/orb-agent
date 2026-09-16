@@ -46,7 +46,7 @@ func TestIPAddressEntityCarriesCustomFields(t *testing.T) {
 	}, config.CustomFieldTokens{AgentName: "lab-agent-01", PolicyName: "lab_scan", ScanTime: scanTime})
 	require.NoError(t, err)
 
-	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.10/24", "192.0.2.10", "lab_scan", resolved)
+	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.10/24", "192.0.2.10", nil, "lab_scan", resolved)
 
 	require.Len(t, ip.CustomFields, 4)
 	assert.Equal(t, diode.CustomFieldValueText("lab-agent-01"), ip.CustomFields["discovery_agent"].Value)
@@ -60,7 +60,7 @@ func TestIPAddressEntityCarriesCustomFields(t *testing.T) {
 // backend emitted before the feature existed.
 func TestIPAddressEntityUnchangedWithoutCustomFields(t *testing.T) {
 	r := runnerWithCustomFields(nil, "")
-	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.10/24", "192.0.2.10", "lab_scan", nil)
+	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.10/24", "192.0.2.10", nil, "lab_scan", nil)
 	assert.Nil(t, ip.CustomFields)
 	assert.Equal(t, "192.0.2.10/24", *ip.Address)
 }
@@ -70,7 +70,7 @@ func TestIPAddressEntitySurvivesABadCustomFieldValue(t *testing.T) {
 	buf := bytes.NewBuffer(nil)
 	r := &Runner{logger: slog.New(slog.NewTextHandler(buf, nil))}
 
-	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.10/24", "192.0.2.10", "lab_scan",
+	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.10/24", "192.0.2.10", nil, "lab_scan",
 		map[string]any{"ok_field": "fine", "bad_field": struct{ X int }{1}})
 
 	assert.Equal(t, "192.0.2.10/24", *ip.Address)
@@ -89,8 +89,8 @@ func TestScanTimestampIsSharedAcrossARun(t *testing.T) {
 	require.NoError(t, err)
 
 	r := runnerWithCustomFields(nil, "")
-	first, _ := r.ipAddressEntity(scannedHost("a.example.net"), "192.0.2.1/24", "192.0.2.1", "p", resolved)
-	second, _ := r.ipAddressEntity(scannedHost("b.example.net"), "192.0.2.2/24", "192.0.2.2", "p", resolved)
+	first, _ := r.ipAddressEntity(scannedHost("a.example.net"), "192.0.2.1/24", "192.0.2.1", nil, "p", resolved)
+	second, _ := r.ipAddressEntity(scannedHost("b.example.net"), "192.0.2.2/24", "192.0.2.2", nil, "p", resolved)
 
 	assert.Equal(t,
 		first.CustomFields["discovery_last_seen"].Value,
@@ -129,7 +129,7 @@ func TestDryRunGolden(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.200/24", "192.0.2.200", "lab_scan", resolved)
+	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.200/24", "192.0.2.200", nil, "lab_scan", resolved)
 	_, err = client.Ingest(context.Background(), []diode.Entity{ip})
 	require.NoError(t, err)
 

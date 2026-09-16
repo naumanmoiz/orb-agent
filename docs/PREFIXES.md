@@ -22,6 +22,12 @@ most specific `subnet_map` entry containing it, so `192.0.2.10` under a
 prefix. An address matching no entry keeps the previous behaviour: the mask of
 the most specific scan target, then `defaults.network_mask`, then `/32`.
 
+A `subnet_map` entry outranks `use_target_masks: false` as well. That switch
+turns off *inferring* a mask from what was scanned; an entry is a declaration of
+what the prefix is, and suppressing it would leave a loose `/32` beside the
+prefix the same policy just created. Outside the map, `use_target_masks: false`
+still means the default mask.
+
 So the VRF is the only thing tying the three together, which is why the next
 section matters more than anything else here.
 
@@ -137,6 +143,56 @@ and left alone rather than merged blindly.
 It prints the `defaults` change needed at the end. **Fix that before the next
 scan** or the duplicate is recreated.
 
+## Placing subnets in different VRFs and tenants
+
+`defaults.vrf` and `defaults.tenant` are the policy's fallback, not its limit.
+An entry that names its own `vrf` or `tenant` places **its prefix and every
+address discovered inside it** there instead, so one policy can scan address
+space spread across several prebuilt VRFs:
+
+```yaml
+config:
+  defaults:
+    vrf: LAB-A                  # used by entries that name none
+    tenant: LAB-A
+    tenant_group: Labs
+scope:
+  targets: [10.1.0.0/16, 10.2.0.0/16]
+  subnet_map:
+    - prefix: 10.1.0.0/16
+      vrf: CORP                 # this subnet lives in CORP, not LAB-A
+      vrf_tenant: Corp          # because the prebuilt CORP VRF has a tenant
+      tenant: Corp              # owns the prefix and the addresses in it
+    - prefix: 10.2.0.0/16       # no vrf: falls back to defaults.vrf
+      tenant: Lab-A
+```
+
+`10.1.0.5` is emitted as `10.1.0.5/16` in VRF `CORP` under tenant `Corp`;
+`10.2.0.5` as `10.2.0.5/16` in `LAB-A` under `Lab-A`. Each address reaches
+NetBox in the same VRF as the prefix declared for its subnet, which is what
+lets NetBox file one under the other.
+
+### The VRF's three fields travel together
+
+An entry's `vrf` brings its own `rd` and `vrf_tenant`. It never inherits the
+defaults' — the three describe **one** VRF, and a reference pairing this entry's
+name with the defaults' `rd` describes a VRF that does not exist, which Diode
+answers by creating one. An entry with no `vrf` inherits all three unchanged.
+
+`rd` or `vrf_tenant` on an entry with no `vrf` is a hard error at policy load,
+because they would otherwise be silently dropped.
+
+`tenant_group` is the exception: it is inherited from `defaults.tenant_group`,
+since a deployment's tenants almost always share one group. An entry whose
+tenant lives in a different group names that group itself.
+
+### One CIDR, one entry
+
+Two entries for the same network are rejected even when they name different
+VRFs. The same CIDR really can exist in two VRFs, but a scan cannot tell which
+one answered — the reply is just a packet — so the second entry would only ever
+win the longest-prefix match. Give each VRF its own policy; one agent runs many.
+
 ## Config
 
 ```yaml
@@ -168,14 +224,18 @@ attribute silently.
 | Key | Type | Required | Notes |
 |---|---|---|---|
 | `prefix` | string | yes | CIDR. Host bits are normalized onto the network address, with a warning |
+| `vrf` | string | no | Places this prefix **and the addresses in it** in this VRF instead of `defaults.vrf`. Must already exist |
+| `rd` | string | no | Only with `vrf`, and only if that prebuilt VRF has an RD. Rejected without `vrf` |
+| `vrf_tenant` | string | no | Only with `vrf`, and only if that prebuilt VRF has a tenant. Rejected without `vrf` |
+| `tenant` | string | no | Owns the prefix **and the addresses in it**. Overrides `defaults.prefix.tenant`, then `defaults.tenant`. Not the VRF's tenant; see `vrf_tenant` |
+| `tenant_group` | string | no | Overrides `defaults.tenant_group` for this entry's tenant references |
 | `status` | string | no | `container`, `active`, `reserved`, `deprecated` |
 | `role` | string | no | An `ipam.Role` by name. Overrides `defaults.prefix.role` |
-| `tenant` | string | no | Overrides `defaults.prefix.tenant`, then `defaults.tenant`. Not the VRF's tenant; see `vrf_tenant` |
 | `description` | string | no | |
 | `is_pool` | bool | no | Tri-state: an explicit `false` is sent, an absent key is not |
 | `mark_utilized` | bool | no | Same |
 | `tags` | list | no | Added to `defaults.tags` and `defaults.prefix.tags` |
-| `custom_fields` | map | no | Extends, does not replace, `config.custom_fields` |
+| `custom_fields` | map | no | Extends, does not replace, `config.custom_fields`. Applied to the prefix **and the addresses in it** |
 
 ### `config.defaults.prefix`
 
@@ -223,15 +283,17 @@ other policy keep running.
 | Rejected | Why |
 |---|---|
 | Missing or invalid CIDR | |
-| Two entries resolving to the same network | The second would silently win the longest-prefix match |
+| Two entries resolving to the same network | The second would silently win the longest-prefix match, even in another VRF |
+| `rd` or `vrf_tenant` without `vrf` | They describe the entry's own VRF and would otherwise be dropped silently |
 | An unknown key in an entry | Would otherwise drop an attribute silently |
 
 Overlapping parent and child entries are valid and expected: that is how the
 hierarchy is declared.
 
-A `subnet_map` with no `defaults.vrf` is warned about rather than rejected: the
-prefixes are then matched globally by CIDR, so two labs sharing address space
-collapse onto one NetBox prefix.
+An entry left with no VRF at all — no `vrf` of its own and no `defaults.vrf` —
+is warned about rather than rejected, by prefix. Its prefix is then matched
+globally by CIDR, so two labs sharing address space collapse onto one NetBox
+prefix.
 
 ## Verifying
 
@@ -240,9 +302,27 @@ python3 tools/netbox-bootstrap/bootstrap_custom_fields.py \
   --config /opt/orb-agent/agent.yaml --dry-run
 ```
 
-Checks the custom fields exist on **both** `ipam.ipaddress` and `ipam.prefix`,
-that every `defaults.vrf` exists, and that the `ipam.Role` objects named by the
-map exist. Then dry-run the agent and confirm the payload:
+Checks the custom fields exist on **both** `ipam.ipaddress` and `ipam.prefix`;
+that every VRF named — `defaults.vrf` and each entry's own — exists and will be
+matched rather than duplicated; that every tenant will be found in the group the
+config gives it; and that the `ipam.Role` objects named by the map exist. It also
+lists every declared prefix, saying which NetBox already holds:
+
+```
+subnet_map prefixes (created only when missing):
+  ok       prefix 10.1.0.0/16 exists in VRF CORP (id=44); it will be updated, not created
+  + create prefix 10.2.0.0/16 does not exist in VRF LAB-A; Diode will create it
+```
+
+That listing is how "created only when missing" stops being a claim you have to
+take on trust. A prefix reported missing that you know exists is the visible end
+of a VRF reference that will not match.
+
+It also reports two policies describing one VRF name with different `rd` or
+`vrf_tenant`. At most one of those shapes can match the VRF that exists; the
+other creates a duplicate.
+
+Then dry-run the agent and confirm the payload:
 
 ```json
 {"prefix": {"prefix": "192.0.2.0/24", "vrf": {"name": "LAB-A"}, "status": "container"}}
@@ -263,11 +343,17 @@ under the parent, and the child's IP Addresses tab should list the address.
   field rather than the whole ingest. A field set in the policy block is on every
   prefix and address, so in practice that is the whole scan.
 
-- **One VRF per policy.** Containment only nests within a VRF, so use one policy
-  per lab. One agent runs many policies.
+- **One VRF per CIDR.** A policy can span many VRFs, but not the same network in
+  two of them: a scan reply carries no VRF, so the agent could not tell them
+  apart. Overlapping VRFs need one policy each. One agent runs many policies.
 - **No NetBox lookup.** `subnet_map` is static. A prefix in NetBox but absent
   from the map contributes nothing, and addresses inside it fall back to the
-  target mask.
+  target mask. Nothing is read back from NetBox at scan time, which is why the
+  preflight exists.
+- **Nothing refuses to create.** The Diode protocol has no match-only flag, so
+  "created only when missing" is a property of the reference matching what is
+  already there, not of a switch the agent can set. The preflight is the guard,
+  and it is worth gating a rollout on: it exits non-zero.
 - **Removing an entry does not delete the prefix.** Discovery only adds and
   updates. Delete it in NetBox.
 - **Unset means untouched.** Removing `role` from an entry stops the agent

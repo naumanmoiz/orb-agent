@@ -60,28 +60,34 @@ func TestSubnetMatcherNilSafe(t *testing.T) {
 // A matched address takes the mask of its entry, so it lands inside the prefix
 // rather than as a loose /32. An unmatched one keeps the pre-existing
 // target-mask behaviour.
-func TestGetIPWithMaskPrefersSubnetMap(t *testing.T) {
+func TestResolveAddressPrefersSubnetMap(t *testing.T) {
 	r := &Runner{
 		logger:  testLogger(),
 		targets: parseTargets([]string{"192.0.2.0/24", "198.51.100.0/24"}),
 		matcher: newSubnetMatcher(nestedMap(t)),
 	}
-	assert.Equal(t, "192.0.2.10/25", r.getIPWithMask("192.0.2.10", "/32"))
-	assert.Equal(t, "192.0.2.130/26", r.getIPWithMask("192.0.2.130", "/32"))
-	assert.Equal(t, "192.0.2.200/24", r.getIPWithMask("192.0.2.200", "/32"))
+	got1, _ := r.resolveAddress("192.0.2.10", "/32")
+	assert.Equal(t, "192.0.2.10/25", got1)
+	got2, _ := r.resolveAddress("192.0.2.130", "/32")
+	assert.Equal(t, "192.0.2.130/26", got2)
+	got3, _ := r.resolveAddress("192.0.2.200", "/32")
+	assert.Equal(t, "192.0.2.200/24", got3)
 	// Inside a target but outside the map: the target mask still applies.
-	assert.Equal(t, "198.51.100.9/24", r.getIPWithMask("198.51.100.9", "/32"))
+	got4, _ := r.resolveAddress("198.51.100.9", "/32")
+	assert.Equal(t, "198.51.100.9/24", got4)
 	// Outside both: the configured default.
-	assert.Equal(t, "203.0.113.9/32", r.getIPWithMask("203.0.113.9", "/32"))
+	got5, _ := r.resolveAddress("203.0.113.9", "/32")
+	assert.Equal(t, "203.0.113.9/32", got5)
 }
 
-func TestGetIPWithMaskWithoutSubnetMap(t *testing.T) {
+func TestResolveAddressWithoutSubnetMap(t *testing.T) {
 	r := &Runner{
 		logger:  testLogger(),
 		targets: parseTargets([]string{"192.0.2.0/24"}),
 		matcher: newSubnetMatcher(nil),
 	}
-	assert.Equal(t, "192.0.2.10/24", r.getIPWithMask("192.0.2.10", "/32"))
+	got6, _ := r.resolveAddress("192.0.2.10", "/32")
+	assert.Equal(t, "192.0.2.10/24", got6)
 }
 
 func prefixRunner(t *testing.T, defaults config.Defaults, entries []config.SubnetMapEntry) *Runner {
@@ -150,7 +156,7 @@ func TestPrefixVrfMirrorsThePrebuiltShape(t *testing.T) {
 		r := prefixRunner(t, config.Defaults{Vrf: "LAB-A", VrfTenant: "312"}, nestedMap(t))
 		r.targets = parseTargets([]string{"192.0.2.0/24"})
 		prefix := r.prefixEntities(nil, "p")[0].(*diode.Prefix)
-		ip, _ := r.ipAddressEntity(scannedHost("h.example.net"), "192.0.2.10/25", "192.0.2.10", "p", nil)
+		ip, _ := r.ipAddressEntity(scannedHost("h.example.net"), "192.0.2.10/25", "192.0.2.10", nil, "p", nil)
 		require.NotNil(t, ip.Vrf.Tenant)
 		assert.Equal(t, *prefix.Vrf.Tenant.Name, *ip.Vrf.Tenant.Name,
 			"a reference that differs between the two would split them across two VRFs")
@@ -241,8 +247,8 @@ func TestAddressAndPrefixShareTheVrf(t *testing.T) {
 	r.targets = parseTargets([]string{"192.0.2.0/24"})
 
 	prefix := r.prefixEntities(nil, "p")[1].(*diode.Prefix)
-	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"),
-		r.getIPWithMask("192.0.2.10", "/32"), "192.0.2.10", "p", nil)
+	addr, entry := r.resolveAddress("192.0.2.10", "/32")
+	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), addr, "192.0.2.10", entry, "p", nil)
 
 	assert.Equal(t, "192.0.2.0/25", *prefix.Prefix)
 	assert.Equal(t, "192.0.2.10/25", *ip.Address, "the address takes its prefix's mask")
@@ -274,8 +280,9 @@ func TestDryRunPrefixGolden(t *testing.T) {
 
 	fields := map[string]any{"discovery_source": "network_discovery"}
 	entities := r.prefixEntities(fields, "lab_a_scan")
-	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"),
-		r.getIPWithMask("192.0.2.10", "/32"), "192.0.2.10", "lab_a_scan", fields)
+	masked, entry := r.resolveAddress("192.0.2.10", "/32")
+	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), masked, "192.0.2.10", entry, "lab_a_scan",
+		entryCustomFields(fields, entry, r.entryCustomFieldCache(fields)))
 	entities = append(entities, ip)
 
 	_, err = client.Ingest(context.Background(), entities)
@@ -345,7 +352,7 @@ func TestTenantReferenceCarriesTheGroup(t *testing.T) {
 		r.targets = parseTargets([]string{"192.0.2.0/24"})
 
 		prefix := r.prefixEntities(nil, "p")[0].(*diode.Prefix)
-		ip, _ := r.ipAddressEntity(scannedHost("h.example.net"), "192.0.2.10/25", "192.0.2.10", "p", nil)
+		ip, _ := r.ipAddressEntity(scannedHost("h.example.net"), "192.0.2.10/25", "192.0.2.10", nil, "p", nil)
 
 		for name, tenant := range map[string]*diode.Tenant{
 			"prefix.tenant": prefix.Tenant,

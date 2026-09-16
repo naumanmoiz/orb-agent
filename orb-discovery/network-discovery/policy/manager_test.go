@@ -121,7 +121,7 @@ func TestManagerGetCapabilities(t *testing.T) {
 	manager := &policy.Manager{}
 
 	capabilities := manager.GetCapabilities()
-	assert.Equal(t, []string{"targets, ports, exclude_ports, timing, fast_mode, ping_scan, top_ports, scan_types, max_retries, subnet_map"}, capabilities)
+	assert.Equal(t, []string{"targets, ports, exclude_ports, timing, fast_mode, ping_scan, top_ports, scan_types, max_retries, subnet_map, subnet_map.vrf, subnet_map.tenant"}, capabilities)
 }
 
 func TestManagerGetPolicyStatuses(t *testing.T) {

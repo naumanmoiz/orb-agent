@@ -20,11 +20,32 @@ import (
 // The map also gives every discovered address the mask of the most specific
 // entry containing it, so the address lands inside the prefix rather than as a
 // loose /32.
+//
+// An entry also decides where that prefix and those addresses live. Its vrf and
+// tenant override defaults.vrf and defaults.tenant for everything inside it, so
+// one policy can scan subnets spread across several prebuilt VRFs and tenants
+// instead of needing one policy per VRF.
 type SubnetMapEntry struct {
-	Prefix       string         `yaml:"prefix"`
+	Prefix string `yaml:"prefix"`
+	// Vrf places this subnet, and every address discovered inside it, in a VRF
+	// other than defaults.vrf. It is what lets one policy scan subnets belonging
+	// to several VRFs.
+	//
+	// The three VRF identity fields travel together: setting vrf here means rd
+	// and vrf_tenant are read from this entry too, never inherited from
+	// defaults. They describe one prebuilt VRF, and pairing this entry's name
+	// with the defaults' rd would build a reference matching neither. An entry
+	// with no vrf inherits all three from defaults, unchanged.
+	Vrf       string `yaml:"vrf,omitempty"`
+	Rd        string `yaml:"rd,omitempty"`
+	VrfTenant string `yaml:"vrf_tenant,omitempty"`
+	// Tenant owns this subnet: it lands on the prefix and on every address
+	// discovered inside it. TenantGroup is inherited from defaults.tenant_group
+	// unless set here, since a deployment's tenants usually share one group.
+	Tenant       string         `yaml:"tenant,omitempty"`
+	TenantGroup  string         `yaml:"tenant_group,omitempty"`
 	Status       string         `yaml:"status,omitempty"`
 	Role         string         `yaml:"role,omitempty"`
-	Tenant       string         `yaml:"tenant,omitempty"`
 	Description  string         `yaml:"description,omitempty"`
 	IsPool       *bool          `yaml:"is_pool,omitempty"`
 	MarkUtilized *bool          `yaml:"mark_utilized,omitempty"`
@@ -111,9 +132,28 @@ func ValidateSubnetMap(entries []SubnetMapEntry, logger *slog.Logger) error {
 			logger.Warn("subnet_map prefix carries host bits; using its network address",
 				"configured", entry.Prefix, "prefix", network.String())
 		}
+		// rd and vrf_tenant describe the VRF named alongside them. On an entry
+		// with no vrf of its own they would be silently dropped, since the
+		// defaults' VRF is referenced with the defaults' own rd and vrf_tenant.
+		if entry.Vrf == "" {
+			if entry.Rd != "" {
+				return fmt.Errorf("subnet_map[%d]: rd is set without vrf; rd describes this entry's own vrf, "+
+					"and defaults.vrf is referenced with defaults.rd", i)
+			}
+			if entry.VrfTenant != "" {
+				return fmt.Errorf("subnet_map[%d]: vrf_tenant is set without vrf; vrf_tenant describes this entry's "+
+					"own vrf, and defaults.vrf is referenced with defaults.vrf_tenant", i)
+			}
+		}
+
 		key := network.String()
 		if first, dup := seen[key]; dup {
-			return fmt.Errorf("subnet_map[%d]: duplicate prefix %s, already declared at subnet_map[%d]", i, key, first)
+			// Deliberately keyed on the network alone, not on (vrf, network).
+			// The same CIDR really can exist in two VRFs, but a scan cannot tell
+			// which one answered, so the second entry would only ever win the
+			// longest-prefix match. Overlapping VRFs need one policy each.
+			return fmt.Errorf("subnet_map[%d]: duplicate prefix %s, already declared at subnet_map[%d]; "+
+				"if the same CIDR exists in two VRFs, give each VRF its own policy", i, key, first)
 		}
 		seen[key] = i
 	}

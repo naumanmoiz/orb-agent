@@ -41,14 +41,15 @@ func (b *prefixBuilder) add(entry *config.SubnetMapEntry, customFields map[strin
 	}
 
 	prefix := &diode.Prefix{Prefix: diode.String(cidr)}
-	if vrf := vrfReference(b.defaults.Vrf, b.defaults.Rd, b.defaults.VrfTenant, b.defaults.TenantGroup); vrf != nil {
-		prefix.Vrf = vrf
+	// The entry decides the VRF and tenant, so a policy can declare subnets
+	// belonging to several of each. The addresses discovered inside this prefix
+	// resolve through the same entry, which is what keeps them together.
+	place := prefixPlacement(b.defaults, entry)
+	if place.vrf != nil {
+		prefix.Vrf = place.vrf
 	}
-	if tenant := tenantReference(
-		firstNonEmpty(entry.Tenant, b.defaults.Prefix.Tenant, b.defaults.Tenant),
-		b.defaults.TenantGroup,
-	); tenant != nil {
-		prefix.Tenant = tenant
+	if place.tenant != nil {
+		prefix.Tenant = place.tenant
 	}
 	if status := firstNonEmpty(entry.Status, b.defaults.Prefix.Status); status != "" {
 		prefix.Status = diode.String(status)

@@ -82,6 +82,7 @@ orb:
         scope:
           targets:
             - 192.0.2.0/24
+            # - 198.51.100.0/24
           # NEW: the subnets to create as NetBox prefixes. Declared, not
           # discovered: an entry is emitted whether or not anything in it
           # answered the scan, and an entry need not be a scan target.
@@ -90,6 +91,13 @@ orb:
           # so no parent is named here. Every entry goes into defaults.vrf, and
           # each discovered address takes the mask of the most specific entry
           # containing it, which is what files it under that prefix.
+          #
+          # An entry that names its own vrf or tenant overrides defaults.vrf and
+          # defaults.tenant for its prefix AND for every address discovered
+          # inside it, so one policy can cover subnets spread across several
+          # prebuilt VRFs. An entry's vrf brings its own rd and vrf_tenant; it
+          # never inherits the defaults', because the three describe one VRF and
+          # a mixed reference matches none of them.
           subnet_map:
             - prefix: 192.0.2.0/24
               status: container
@@ -103,3 +111,11 @@ orb:
               role: lab-gpu
               custom_fields:
                 lab_id: "312"
+            # A subnet belonging to a different prebuilt VRF and tenant. Both
+            # must already exist; verify with the bootstrap script, which lists
+            # every prefix it would create and every VRF it cannot match.
+            # - prefix: 198.51.100.0/24
+            #   vrf: CORP-AUS
+            #   vrf_tenant: "CORP"    # only if the prebuilt CORP-AUS VRF has one
+            #   tenant: "CORP"
+            #   role: corp-access

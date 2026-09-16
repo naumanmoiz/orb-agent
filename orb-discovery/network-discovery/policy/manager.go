@@ -83,9 +83,21 @@ func (m *Manager) StartPolicy(name string, policy config.Policy) error {
 	// A prefix with no VRF is matched globally by its CIDR, so two labs sharing
 	// address space would collapse onto one NetBox prefix. The VRF is what keeps
 	// them apart, and these VRFs are prebuilt, so a missing one is a config error.
-	if len(policy.Scope.SubnetMap) > 0 && policy.Config.Defaults.Vrf == "" {
-		m.logger.Warn("subnet_map declared without defaults.vrf; prefixes will be matched globally by CIDR "+
-			"and overlapping labs will collide on one NetBox prefix", "policy", name)
+	// An entry naming its own vrf is covered; only the ones left with none are
+	// reported, and by prefix, since with per-entry VRFs the gap is usually a few
+	// entries rather than the whole policy.
+	if policy.Config.Defaults.Vrf == "" {
+		var unscoped []string
+		for i := range policy.Scope.SubnetMap {
+			if policy.Scope.SubnetMap[i].Vrf == "" {
+				unscoped = append(unscoped, policy.Scope.SubnetMap[i].Prefix)
+			}
+		}
+		if len(unscoped) > 0 {
+			m.logger.Warn("subnet_map entries have no VRF and defaults.vrf is unset; their prefixes will be "+
+				"matched globally by CIDR and overlapping labs will collide on one NetBox prefix",
+				"prefixes", unscoped, "policy", name)
+		}
 	}
 
 	if err := config.ValidateTimestampPrecision(policy.Config.TimestampPrecision); err != nil {
@@ -129,7 +141,7 @@ func (m *Manager) Stop() error {
 
 // GetCapabilities returns the capabilities of network-discovery
 func (m *Manager) GetCapabilities() []string {
-	return []string{"targets, ports, exclude_ports, timing, fast_mode, ping_scan, top_ports, scan_types, max_retries, subnet_map"}
+	return []string{"targets, ports, exclude_ports, timing, fast_mode, ping_scan, top_ports, scan_types, max_retries, subnet_map, subnet_map.vrf, subnet_map.tenant"}
 }
 
 // Status represents the status of a policy with its runs

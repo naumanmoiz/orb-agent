@@ -33,7 +33,6 @@ const (
 type targetInfo struct {
 	original string
 	network  *net.IPNet
-	mask     string
 }
 
 // Runner represents the policy runner
@@ -61,8 +60,6 @@ func parseTargets(targets []string) []targetInfo {
 			_, network, err := net.ParseCIDR(target)
 			if err == nil {
 				info.network = network
-				maskBits, _ := network.Mask.Size()
-				info.mask = fmt.Sprintf("/%d", maskBits)
 				result = append(result, info)
 			}
 		}
@@ -70,35 +67,49 @@ func parseTargets(targets []string) []targetInfo {
 	return result
 }
 
-// getIPWithMask returns the IP address with the appropriate mask based on the most specific target network
-func (r *Runner) getIPWithMask(ipStr string, defaultMask string) string {
+// resolveAddress returns the address with the mask NetBox should file it under,
+// and the subnet_map entry that decided it, or nil when the address matched no
+// entry. The entry is returned rather than looked up twice because it also
+// carries the VRF and tenant the address is placed in.
+//
+// Precedence, most specific first:
+//
+//	subnet_map        the mask of the most specific entry containing the address
+//	scan targets      the mask of the most specific target containing it
+//	defaults          network_mask, else /32
+//
+// A subnet_map entry outranks both of the others, and use_target_masks: false
+// with it. The entry declares what the prefix is; a target only says what was
+// scanned, and use_target_masks only turns that inference off. Emitting the
+// declared mask is the whole mechanism that files the address inside the
+// declared prefix, so letting either suppress it would leave a loose /32 beside
+// the prefix the same policy just created.
+func (r *Runner) resolveAddress(ipStr string, defaultMask string) (string, *config.SubnetMapEntry) {
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
-		return ipStr + defaultMask
+		return ipStr + defaultMask, nil
 	}
 
-	// A subnet_map match is more specific than any target: the map states what
-	// the prefix actually is, while a target only states what was scanned. With
-	// no match the target-mask behaviour below is unchanged.
 	if entry := r.matcher.match(ip); entry != nil {
-		return ipStr + fmt.Sprintf("/%d", entry.MaskBits())
+		return ipStr + fmt.Sprintf("/%d", entry.MaskBits()), entry
 	}
 
-	var bestTarget *targetInfo
-	var bestMask int
+	if r.scope.UseTargetMasks != nil && !*r.scope.UseTargetMasks {
+		return ipStr + defaultMask, nil
+	}
+
+	bestMask := -1
 	for _, target := range r.targets {
 		if target.network.Contains(ip) {
-			maskBits, _ := target.network.Mask.Size()
-			if bestTarget == nil || maskBits > bestMask {
-				bestTarget = &target
+			if maskBits, _ := target.network.Mask.Size(); maskBits > bestMask {
 				bestMask = maskBits
 			}
 		}
 	}
-	if bestTarget != nil {
-		return ipStr + bestTarget.mask
+	if bestMask >= 0 {
+		return ipStr + fmt.Sprintf("/%d", bestMask), nil
 	}
-	return ipStr + defaultMask
+	return ipStr + defaultMask, nil
 }
 
 // NewRunner returns a new policy runner
@@ -375,6 +386,12 @@ func (r *Runner) run() {
 		defaultMask = fmt.Sprintf("/%d", *r.config.Defaults.NetworkMask)
 	}
 
+	// An entry's custom_fields describe its subnet, so they reach the addresses
+	// in it as well as its prefix. Merged once per entry rather than once per
+	// host: a subnet with a thousand answering addresses would otherwise rebuild
+	// the same map a thousand times.
+	entryFields := r.entryCustomFieldCache(customFields)
+
 	for _, host := range result.Hosts {
 		r.logger.Debug("processing host", "host_address", host.Addresses, "host_ports", host.Ports,
 			"host_hostnames", host.Hostnames, "policy", policyName)
@@ -388,15 +405,11 @@ func (r *Runner) run() {
 			continue
 		}
 
-		var ipAddr string
-		if r.scope.UseTargetMasks != nil && !*r.scope.UseTargetMasks {
-			ipAddr = addr + defaultMask
-		} else {
-			ipAddr = r.getIPWithMask(addr, defaultMask)
-		}
+		ipAddr, entry := r.resolveAddress(addr, defaultMask)
 		processedEntries[addr] = true
 
-		ip, outcome := r.ipAddressEntity(host, ipAddr, addr, policyName, customFields)
+		ip, outcome := r.ipAddressEntity(host, ipAddr, addr, entry, policyName,
+			entryCustomFields(customFields, entry, entryFields))
 		switch outcome {
 		case hostnameReplaced:
 			replacedHostnames++
@@ -467,8 +480,8 @@ func (r *Runner) Stop() error {
 }
 
 // ipAddressEntity builds the IP address entity for one scanned host.
-func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr, policyName string,
-	customFields map[string]any,
+func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr string, entry *config.SubnetMapEntry,
+	policyName string, customFields map[string]any,
 ) (*diode.IPAddress, hostnameOutcome) {
 	ip := &diode.IPAddress{
 		Address: diode.String(ipAddr),
@@ -488,12 +501,11 @@ func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr, policyName string
 		hasComments = true
 		ip.Comments = diode.String(r.config.Defaults.Comments)
 	}
-	if vrf := vrfReference(r.config.Defaults.Vrf, r.config.Defaults.Rd, r.config.Defaults.VrfTenant, r.config.Defaults.TenantGroup); vrf != nil {
-		ip.Vrf = vrf
-	}
-	if tenant := tenantReference(r.config.Defaults.Tenant, r.config.Defaults.TenantGroup); tenant != nil {
-		ip.Tenant = tenant
-	}
+	// The subnet the address was found in decides its VRF and tenant, so it is
+	// filed with the prefix declared for that subnet rather than with whatever
+	// the rest of the policy scans. With no matching entry this is the policy's
+	// own defaults, unchanged.
+	addressPlacement(r.config.Defaults, entry).apply(ip)
 	if r.config.Defaults.Role != "" {
 		ip.Role = diode.String(r.config.Defaults.Role)
 	}
@@ -539,4 +551,36 @@ func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr, policyName string
 		}
 	}
 	return ip, outcome
+}
+
+// entryCustomFieldCache merges each subnet_map entry's custom_fields over the
+// policy-wide ones, once per entry. The result is keyed by entry pointer, which
+// is what the matcher returns.
+func (r *Runner) entryCustomFieldCache(base map[string]any) map[*config.SubnetMapEntry]map[string]any {
+	if len(r.scope.SubnetMap) == 0 {
+		return nil
+	}
+	cache := make(map[*config.SubnetMapEntry]map[string]any, len(r.scope.SubnetMap))
+	for i := range r.scope.SubnetMap {
+		entry := &r.scope.SubnetMap[i]
+		if len(entry.CustomFields) == 0 {
+			continue
+		}
+		cache[entry] = config.MergeCustomFields(base, entry.CustomFields)
+	}
+	return cache
+}
+
+// entryCustomFields returns the custom fields for an address in entry, which is
+// base when the entry adds none of its own.
+func entryCustomFields(base map[string]any, entry *config.SubnetMapEntry,
+	cache map[*config.SubnetMapEntry]map[string]any,
+) map[string]any {
+	if entry == nil {
+		return base
+	}
+	if merged, ok := cache[entry]; ok {
+		return merged
+	}
+	return base
 }
