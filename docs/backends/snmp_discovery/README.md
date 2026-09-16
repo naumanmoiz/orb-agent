@@ -122,7 +122,7 @@ SNMP discovery policies are broken down into two subsections: `config` and `scop
 | ├─ comments | string  | Prefix comments |
 | ├─ tags | list  | Prefix tags |
 | ├─ role | string  | Prefix role |
-| ├─ tenant | string  | Prefix tenant |
+| ├─ tenant | string \| map  | Prefix tenant. Bare name or a [tenant map](#tenant-map); a bare name inherits `defaults.tenant`'s group |
 | ├─ vrf   | string \| map  | Prefix VRF (same `vrf` map shape; independent of `ip_address.vrf`) |
 | ├─ vrf_ipv4   | string \| map  | IPv4-specific prefix VRF override |
 | ├─ vrf_ipv6   | string \| map  | IPv6-specific prefix VRF override |
@@ -134,17 +134,29 @@ SNMP discovery policies are broken down into two subsections: `config` and `scop
 | ├─ description | string  | VRF description |
 | ├─ comments | string  | VRF comments |
 | ├─ tags | list  | VRF tags |
-| ├─ tenant   | string  | IP address tenant              |
+| ├─ tenant   | string \| map  | IP address tenant. Bare name or a [tenant map](#tenant-map); a bare name inherits `defaults.tenant`'s group |
 | ├─ description | string  | IP address description      |
 | vlan    | map  | VLAN-specific defaults  |
 | ├─ description | string  | VLAN description |
 | ├─ tags | list | Per-VLAN tags. Merged with the top-level `tags` list on each emitted VLAN entity, mirroring the `device`/`interface`/`ip_address` defaults pattern. |
 | ├─ group | string \| map | VLAN group. A bare name attaches every emitted VLAN to an `ipam.vlangroup` scoped to `defaults.site`. The map form takes `name` plus one optional scope: `scope_site`, `scope_site_group`, `scope_region` or `scope_location` (see the [VLAN group map](#vlan-group-map) below). In a per-target `override_defaults`, the group replaces the policy value as a whole |
-| ├─ tenant | string | VLAN tenant |
+| ├─ tenant | string \| map | VLAN tenant. Bare name or a [tenant map](#tenant-map); a bare name inherits `defaults.tenant`'s group |
 | ├─ status | string | VLAN status override (`active`, `reserved`, `deprecated`). When unset, status is derived from `dot1qVlanStaticRowStatus`: `active(1)` → `active`, `notInService(2)` → `reserved`. |
 
 ##### Tenant Map
-The top-level `tenant` default accepts either a bare string (tenant name) or a map:
+The `tenant` defaults — top-level, and the per-entity `ip_address.tenant`,
+`prefix.tenant` and `vlan.tenant` — accept either a bare string (tenant name) or
+a map.
+
+`group` is the field that decides whether a prebuilt tenant is found at all.
+NetBox makes Tenant unique on `(group, name)` with `nulls_distinct=False`, and
+the plugin reads an absent group as **`group IS NULL`**, not "any group". A
+group-less reference therefore cannot match a tenant that sits in a group:
+nothing matches, and Diode creates a second tenant of the same name outside it.
+
+A per-entity tenant given as a bare name inherits the top-level
+`defaults.tenant`'s group, since a deployment's tenants almost always share one.
+Name the group on the entity when its tenant lives elsewhere.
 
 | Parameter | Type | Description |
 |---------|----|-----------|
@@ -153,6 +165,45 @@ The top-level `tenant` default accepts either a bare string (tenant name) or a m
 | description | string  | Tenant description |
 | comments | string  | Tenant comments |
 | tags | list  | Tenant tags |
+
+##### VRF Map
+A `vrf` default accepts either a bare string (the VRF name) or a map. The fields
+are not decoration: the Diode NetBox plugin picks its VRF matcher from the fields
+the payload carries, and then restricts the search by them.
+
+| Reference carries | Searches VRFs where |
+|---|---|
+| `name` | `rd IS NULL` **and** `tenant IS NULL` |
+| `name` + `tenant` | `rd IS NULL` and that tenant |
+| `name` + `rd` | NetBox's own `rd` unique constraint |
+
+So a name-only reference can only ever find a VRF that has neither an RD nor a
+tenant. Point it at a VRF that has either and **nothing matches**: Diode creates
+a second, empty VRF of the same name and reconciles into it. The ingest reports
+success while the address space ends up split across two VRFs.
+
+`rd` and `tenant` therefore mirror what the prebuilt VRF already has. They are
+not a way to assign an RD or a tenant to a VRF, and omitting one the VRF does
+have is the failure that looks like success.
+
+| Parameter | Type | Description |
+|---------|----|-----------|
+| name | string | VRF name |
+| rd | string | Route distinguisher. Set only when the prebuilt VRF has one |
+| tenant | string | Tenant on the VRF. Set only when the prebuilt VRF has one |
+| tenant_group | string | Group that tenant belongs to. Defaults to `defaults.tenant`'s group |
+| description | string | VRF description |
+| comments | string | VRF comments |
+| tags | list | VRF tags |
+
+```yaml
+defaults:
+  tenant: { name: network-ops, group: infrastructure }
+  ip_address:
+    vrf:
+      name: "mgmt"
+      tenant: "network-ops"      # because the prebuilt mgmt VRF has this tenant
+```
 
 ##### VLAN Group Map
 Diode matches a VLAN group on its name and scope, so the group must be scoped the way it is in NetBox. With a bare name the group is scoped to `defaults.site`. When VLANs are shared across several sites, scope the group to the site group, region or location that holds them instead:

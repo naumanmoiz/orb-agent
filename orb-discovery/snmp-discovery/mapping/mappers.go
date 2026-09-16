@@ -95,9 +95,12 @@ func (m *IPAddressMapper) applyDefaults(entity *diode.IPAddress, defaults *confi
 	if entity.Comments == nil && entityDefaults.Comments != "" {
 		entity.Comments = &entityDefaults.Comments
 	}
-	if entity.Tenant == nil && entityDefaults.Tenant != "" {
-		entity.Tenant = &diode.Tenant{
-			Name: &entityDefaults.Tenant,
+	if entity.Tenant == nil {
+		// The group comes from defaults.tenant when this block names a bare
+		// tenant: without it a grouped tenant is never found and Diode creates a
+		// duplicate outside the group. See TenantRef.
+		if tenant := TenantRef(entityDefaults.Tenant, defaults.Tenant.Group); tenant != nil {
+			entity.Tenant = tenant
 		}
 	}
 	if entity.Role == nil && entityDefaults.Role != "" {
@@ -120,6 +123,7 @@ func (m *IPAddressMapper) applyDefaults(entity *diode.IPAddress, defaults *confi
 			if vrfDefaults.Rd != "" {
 				vrf.Rd = &vrfDefaults.Rd
 			}
+			applyVrfTenant(vrf, vrfDefaults, defaults.Tenant.Group)
 			if vrfDefaults.Description != "" {
 				vrf.Description = &vrfDefaults.Description
 			}

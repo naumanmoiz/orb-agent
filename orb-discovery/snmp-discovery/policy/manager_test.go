@@ -1271,7 +1271,7 @@ func TestManagerParsePoliciesWithOverrideDefaults(t *testing.T) {
 		assert.Equal(t, "1000base-t", overrides.Interface.Type)
 		assert.Equal(t, []string{"override-interface"}, overrides.Interface.Tags)
 		assert.Equal(t, "loopback", overrides.IPAddress.Role)
-		assert.Equal(t, "override-tenant", overrides.IPAddress.Tenant)
+		assert.Equal(t, "override-tenant", overrides.IPAddress.Tenant.Name)
 	})
 
 	t.Run("Mixed Configuration - Some Targets with Overrides", func(t *testing.T) {

@@ -138,7 +138,7 @@ func DerivePrefixes(
 		vrf := vrfByAddress[addr]
 		if vrf == nil && defaults != nil {
 			var misconfigured bool
-			vrf, misconfigured = prefixDefaultsVrf(&defaults.Prefix, family)
+			vrf, misconfigured = prefixDefaultsVrf(&defaults.Prefix, family, defaults.Tenant.Group)
 			if misconfigured && !warnedNamelessVrf {
 				warnedNamelessVrf = true
 				logger.Warn(
@@ -222,7 +222,7 @@ func DerivePrefixes(
 // nothing; the second return flags that misconfiguration (sub-fields set
 // but no name) so the caller can warn — the IP-side warning covers only
 // the defaults.ip_address knobs.
-func prefixDefaultsVrf(d *config.PrefixDefaults, family string) (*diode.VRF, bool) {
+func prefixDefaultsVrf(d *config.PrefixDefaults, family, fallbackGroup string) (*diode.VRF, bool) {
 	params, _ := d.VrfForFamily(family)
 	if params.Name == "" {
 		return nil, !params.IsZero()
@@ -233,6 +233,7 @@ func prefixDefaultsVrf(d *config.PrefixDefaults, family string) (*diode.VRF, boo
 		rd := params.Rd
 		vrf.Rd = &rd
 	}
+	applyVrfTenant(vrf, params, fallbackGroup)
 	if params.Description != "" {
 		desc := params.Description
 		vrf.Description = &desc
@@ -300,9 +301,8 @@ func applyPrefixDefaults(prefix *diode.Prefix, defaults *config.Defaults, option
 		role := d.Role
 		prefix.Role = &diode.Role{Name: &role}
 	}
-	if d.Tenant != "" {
-		tenant := d.Tenant
-		prefix.Tenant = &diode.Tenant{Name: &tenant}
+	if tenant := TenantRef(d.Tenant, defaults.Tenant.Group); tenant != nil {
+		prefix.Tenant = tenant
 	}
 	var tags []*diode.Tag
 	for _, t := range d.Tags {

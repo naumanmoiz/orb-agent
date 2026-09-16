@@ -319,7 +319,7 @@ func TestVlanMapper_EmitVLANs_AppliesDefaults(t *testing.T) {
 		VLAN: config.VLANDefaults{
 			Description: "auto-discovered",
 			Tags:        []string{"vlan-tag"},
-			Tenant:      "NetOps",
+			Tenant:      config.TenantParameters{Name: "NetOps"},
 			Group:       config.VLANGroupParameters{Name: "campus-vlans"},
 		},
 	}
