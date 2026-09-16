@@ -26,7 +26,9 @@ import argparse
 import datetime
 import json
 import os
+import re
 import sys
+import unicodedata
 import urllib.parse
 from typing import Any
 
@@ -262,6 +264,14 @@ class NetBox:
         results = (self.get(path, filters) or {}).get("results") or []
         return results[0] if results else None
 
+    def find_all(self, path: str, **filters: Any) -> list[dict[str, Any]]:
+        """Every match, not just the first.
+
+        find() hides duplicates, which is the one thing a preflight that exists
+        to detect duplicates must not do.
+        """
+        return (self.get(path, filters) or {}).get("results") or []
+
 
 def ensure_custom_field(nb: NetBox, name: str, field_type: str) -> None:
     """Create a custom field, or report an existing one that does not match.
@@ -477,12 +487,27 @@ def check_vrfs(nb: "NetBox", configured: dict[str, dict[str, str]]) -> dict[str,
 def check_tenants(nb: "NetBox", configured: dict[str, str]) -> None:
     """Verify every tenant a policy names, and report the group it needs.
 
-    NetBox makes Tenant unique on (group, name) with nulls_distinct=False, which
-    the plugin turns into a matcher where an absent group means "group IS NULL"
-    rather than "any group". A group-less reference cannot find a tenant that
-    sits in a group, so Diode creates a second tenant of the same name outside
-    it and hangs the objects off that. Same failure as the VRF, one level down,
-    and just as silent.
+    A tenant reference is resolved by four criteria in order. The first three
+    are the (group, name) constraint and its group-IS-NULL partial twin, so a
+    group-less reference can only ever find a group-less tenant. The fourth is
+    AutoSlugMatcher, which matches on the slug the transformer generated from
+    the name -- with NO group condition and NO name condition. That last one
+    decides how bad a missing group actually is, and it splits the mismatch
+    into three outcomes the earlier version reported as one:
+
+      rescued    the slug happens to equal slugify(name), so the group-less
+                 reference still binds the right tenant. Works today, but by
+                 coincidence: rename the tenant and it stops.
+      cascading  the stored slug differs from slugify(name), so nothing
+                 matches. Diode creates a second tenant -- and because the VRF
+                 reference carries that now-unresolved tenant, the VRF cannot
+                 be matched either and is duplicated too, though its own shape
+                 is perfectly correct.
+      ambiguous  several tenants share slugify(name). The reference cannot say
+                 which it means and binds the oldest, silently.
+
+    Verified end to end against the plugin on NetBox 4.6; see the plugin's
+    docs/matching-criteria-documentation.md for the criteria and their order.
     """
     if not configured:
         return
@@ -500,17 +525,67 @@ def check_tenants(nb: "NetBox", configured: dict[str, str]) -> None:
         if actual_group == want_group:
             shape = f"group {actual_group}" if actual_group else "no group"
             print(f"  ok       tenant {name} (id={existing['id']}), matched on name within {shape}")
+            _warn_on_slug_ambiguity(nb, name)
             continue
+
+        auto_slug = slugify(name)
+        slug_rescues = existing.get("slug") == auto_slug
+        by_slug = nb.find_all("/api/tenancy/tenants/", slug=auto_slug)
+
+        if slug_rescues and len(by_slug) == 1:
+            print(f"  ~ FRAGILE tenant {name} (id={existing['id']}) is in group "
+                  f"{actual_group or 'null'}, which the policy does not name.")
+            print(f"            It still matches today, but only because its slug is "
+                  f"{auto_slug!r}, which the")
+            print("            plugin regenerates from the name. Rename the tenant, or give it "
+                  "another slug,")
+            print("            and this silently starts creating duplicates. Set in defaults:")
+            _print_group_remedy(actual_group)
+            continue
+
         problem = f"tenant {name} exists (id={existing['id']}) but the policy will not match it."
         nb.problems.append(problem)
         print(f"  ! MISMATCH {problem}")
-        print(f"            NetBox has: group={actual_group or 'null'}")
+        print(f"            NetBox has: group={actual_group or 'null'}, "
+              f"slug={existing.get('slug')!r}")
         print(f"            policy has: tenant_group={want_group or 'unset'}")
-        print("            Diode would create a SECOND tenant with this name. Set in defaults:")
-        if actual_group:
-            print(f'              tenant_group: "{actual_group}"')
-        else:
-            print("              (remove tenant_group; this tenant has none)")
+        if not slug_rescues:
+            print(f"            The slug fallback cannot save it either: the plugin would look "
+                  f"for slug={auto_slug!r}.")
+            print("            Diode would create a SECOND tenant AND, because the VRF reference "
+                  "carries this")
+            print("            tenant, a SECOND VRF alongside it. Set in defaults:")
+        elif len(by_slug) > 1:
+            ids = ", ".join(str(t["id"]) for t in by_slug)
+            print(f"            {len(by_slug)} tenants share slug {auto_slug!r} (ids: {ids}); "
+                  "the reference would")
+            print("            bind the oldest, which may not be this one. Set in defaults:")
+        _print_group_remedy(actual_group)
+
+
+def _print_group_remedy(actual_group: str) -> None:
+    """The one-line config change a mismatched tenant needs."""
+    if actual_group:
+        print(f'              tenant_group: "{actual_group}"')
+    else:
+        print("              (remove tenant_group; this tenant has none)")
+
+
+def _warn_on_slug_ambiguity(nb: "NetBox", name: str) -> None:
+    """Flag a correctly-grouped tenant that another tenant's slug collides with.
+
+    NetBox constrains (group, slug), not slug, so two groups may each hold a
+    tenant slugged the same. That is harmless while every reference carries its
+    group, and binds the oldest the moment one does not.
+    """
+    by_slug = nb.find_all("/api/tenancy/tenants/", slug=slugify(name))
+    if len(by_slug) < 2:
+        return
+    ids = ", ".join(str(t["id"]) for t in by_slug)
+    print(f"           note: {len(by_slug)} tenants share slug {slugify(name)!r} (ids: {ids}). "
+          "Harmless while")
+    print("                 every tenant reference carries its group; a group-less one would "
+          "bind the oldest.")
 
 
 def check_roles(nb: "NetBox", names: set[str]) -> None:
@@ -533,18 +608,33 @@ def check_roles(nb: "NetBox", names: set[str]) -> None:
 
 
 def slugify(value: str) -> str:
-    """Lower-case, replacing each run of non-alphanumerics with one hyphen.
+    """Reproduce django.utils.text.slugify exactly.
 
-    Matches the slug the NetBox plugin generates from a Role name, so the role
-    this script creates is the one the agent then reconciles against.
+    This has to be exact, not merely close. The plugin's transformer generates
+    a slug for any reference that carries none, using Django's slugify, and
+    AutoSlugMatcher then matches on that slug ALONE -- no name, no group. So a
+    slug this script computes differently from Django is a slug the agent will
+    never match, and the object gets created a second time.
+
+    The earlier hand-rolled version replaced every run of non-alphanumerics
+    with a hyphen. Django instead DELETES characters outside [\\w\\s-] and only
+    then collapses runs of whitespace and hyphens, keeps the underscore that
+    \\w includes, and NFKD-folds accents to ASCII rather than dropping them.
+    The two agree on plain names and diverge on punctuation, underscores and
+    accents:
+
+        Corp.Ltd  -> django "corpltd"       old "corp-ltd"
+        Lab_A     -> django "lab_a"         old "lab-a"
+        R&D       -> django "rd"            old "r-d"
+        Café      -> django "cafe"          old "caf"
+        10.1 Net  -> django "101-net"       old "10-1-net"
+
+    Verified against the real django.utils.text.slugify on NetBox 4.6.
     """
-    out: list[str] = []
-    for char in value.strip().lower():
-        if char.isalnum() and char.isascii():
-            out.append(char)
-        elif out and out[-1] != "-":
-            out.append("-")
-    return "".join(out).rstrip("-")
+    value = unicodedata.normalize("NFKD", str(value))
+    value = value.encode("ascii", "ignore").decode("ascii")
+    value = re.sub(r"[^\w\s-]", "", value.lower())
+    return re.sub(r"[-\s]+", "-", value).strip("-_")
 
 
 def _value_hint(netbox_type: str) -> str:
@@ -561,7 +651,7 @@ def _value_hint(netbox_type: str) -> str:
     return hints.get(netbox_type, "")
 
 
-def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], dict[str, dict[str, str]], dict[str, str], set[str]]:
+def collect_from_config(path: str) -> tuple[dict[str, str], dict[str, Any], dict[str, dict[str, str]], dict[str, str], set[str], list[tuple[str, str]]]:
     """Read the custom field names a config names, with the type each will carry.
 
     Reads both the agent-level shape (orb.policies.network_discovery.<name>) and
