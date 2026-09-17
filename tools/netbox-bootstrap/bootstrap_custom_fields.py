@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import ipaddress
 import json
 import os
 import re
@@ -260,6 +261,24 @@ class NetBox:
             pass
         return "content_types"
 
+    def get_optional(self, path: str) -> Any | None:
+        """GET a path that may legitimately not exist, returning None instead of exiting.
+
+        _request turns every non-2xx into SystemExit, which is right for the
+        endpoints this script depends on and wrong for probing an optional
+        plugin: "not installed" is an answer, not a failure.
+        """
+        try:
+            response = self.session.get(f"{self.url}{path}", timeout=30)
+        except requests_exceptions.RequestException:
+            return None
+        if not response.ok:
+            return None
+        try:
+            return response.json()
+        except ValueError:
+            return None
+
     def find(self, path: str, **filters: Any) -> dict[str, Any] | None:
         results = (self.get(path, filters) or {}).get("results") or []
         return results[0] if results else None
@@ -418,6 +437,72 @@ def _check_choice(nb: "NetBox", name: str, field: dict[str, Any]) -> None:
         print(f"             value {configured!r} is a valid choice")
 
 
+def report_duplicates(nb: "NetBox", path: str, label: str, describe, **filters: Any) -> list:
+    """List every object matching the filters, and flag it loudly if there are several.
+
+    The whole point of this preflight is duplicates, and find() returns only
+    results[0] -- so for most of this script's life it would report "ok, matched
+    id=3" against a NetBox holding three rows of that name, and cheerfully agree
+    that everything was fine. Duplicates are the one thing it must never hide.
+
+    Returns the full list so callers can keep using the first entry as before.
+    """
+    # Sorted by id so rows[0] is the row DIODE will bind: find_existing_object
+    # ends every lookup with order_by('pk').first(). The API's own ordering is by
+    # name, which among same-named rows is arbitrary -- and picking the wrong one
+    # here silently poisons everything downstream, because check_prefixes looks
+    # prefixes up by the VRF id this returns.
+    rows = sorted(nb.find_all(path, **filters), key=lambda r: r["id"])
+    if len(rows) > 1:
+        ids = ", ".join(str(r["id"]) for r in rows)
+        problem = (f"{len(rows)} rows match {label} (ids: {ids}). Diode binds the oldest, "
+                   f"id={rows[0]['id']}; the rest sit there holding whatever earlier runs "
+                   "wrote to them.")
+        nb.problems.append(problem)
+        print(f"  ! DUPLICATE {problem}")
+        for row in rows:
+            print(f"              id={row['id']}  {describe(row)}")
+    return rows
+
+
+def check_branching(nb: "NetBox") -> None:
+    """Warn when NetBox Branching could hide prebuilt objects from the ingest.
+
+    Diode plans and applies inside a branch's schema whenever one is active --
+    and the plugin falls back to a default branch stored in its own Setting when
+    no X-NetBox-Branch header is sent, so a branch can be in force with nothing
+    in the agent or reconciler config mentioning it.
+
+    Branch provisioning snapshots main at that moment. Anything created in main
+    afterwards does not exist in the branch, so the ingest cannot match it and
+    creates its own copy there. The rule this implies is an ordering one:
+
+        Bootstrap first, provision the branch second. If prebuilt objects change
+        after a branch exists, sync the branch before the next ingest.
+
+    This check cannot read which branch Diode is pointed at -- /default-branch/
+    is authenticated as the Diode OAuth2 client, not with a NetBox token -- so it
+    reports the condition and the rule rather than a verdict.
+    """
+    branches = nb.get_optional("/api/plugins/branching/branches/")
+    if branches is None:
+        return  # branching is not installed; nothing can be hidden
+    print("\nnetbox branching:")
+    results = branches.get("results") or []
+    if not results:
+        print("  ok       installed, no branches exist; the ingest matches against main")
+        return
+    print(f"  ~ NOTE   {len(results)} branch(es) exist. If Diode is pointed at one, it matches "
+          "objects in that")
+    print("           branch's schema, NOT in main -- and this script only ever reads main, so a")
+    print("           prebuilt object it reports as 'ok' can still be invisible to the ingest.")
+    for branch in results:
+        print(f"           - {branch.get('name')!r} (schema {branch.get('schema_id')}, "
+              f"status {(branch.get('status') or {}).get('value', branch.get('status'))})")
+    print("           Rule: bootstrap BEFORE provisioning a branch, and sync the branch after any")
+    print("           later bootstrap change. Confirm which branch Diode uses on its settings page.")
+
+
 def check_vrfs(nb: "NetBox", configured: dict[str, dict[str, str]]) -> dict[str, int]:
     """Verify every VRF a policy names, and report the config it needs.
 
@@ -442,7 +527,11 @@ def check_vrfs(nb: "NetBox", configured: dict[str, dict[str, str]]) -> dict[str,
     print("\nvrfs (verified, never created):")
     for name in sorted(configured):
         policy = configured[name]
-        existing = nb.find("/api/ipam/vrfs/", name=name)
+        rows = report_duplicates(
+            nb, "/api/ipam/vrfs/", f"VRF named {name!r}",
+            lambda r: f"rd={r.get('rd') or 'null'} tenant={(r.get('tenant') or {}).get('name') or 'null'} created={r.get('created')}",
+            name=name)
+        existing = rows[0] if rows else None
         if existing:
             # Kept for check_prefixes: a prefix can only be looked up by VRF id,
             # never by VRF name. See the note there.
@@ -514,7 +603,11 @@ def check_tenants(nb: "NetBox", configured: dict[str, str]) -> None:
     print("\ntenants (verified, never created):")
     for name in sorted(configured):
         want_group = configured[name] or ""
-        existing = nb.find("/api/tenancy/tenants/", name=name)
+        rows = report_duplicates(
+            nb, "/api/tenancy/tenants/", f"tenant named {name!r}",
+            lambda r: f"slug={r.get('slug')!r} group={(r.get('group') or {}).get('name') or 'null'} created={r.get('created')}",
+            name=name)
+        existing = rows[0] if rows else None
         if not existing:
             problem = (f"tenant {name!r} does not exist. Diode would create one rather than match "
                        "a prebuilt tenant. Create it in NetBox, or fix defaults.tenant.")
@@ -788,6 +881,21 @@ def check_prefixes(nb: "NetBox", declared: list[tuple[str, str]], vrf_ids: dict[
         return
     print("\nsubnet_map prefixes (created only when missing):")
     for cidr, vrf in sorted(set(declared)):
+        # Parse before querying. network-discovery runs net.ParseCIDR over every
+        # subnet_map entry at startup and refuses to load the policy if one
+        # fails, so a prefix that does not parse is a policy that will not run --
+        # not, as the old output implied, a prefix Diode is about to create.
+        # Reported with repr() because the usual cause is a stray quote or space
+        # that is invisible in an unquoted line.
+        try:
+            ipaddress.ip_network(cidr, strict=False)
+        except ValueError as err:
+            problem = (f"prefix {cidr!r} is not a valid CIDR: {err}. network-discovery rejects "
+                       "this at startup, so the whole policy fails to load. Fix the subnet_map "
+                       "entry in the config.")
+            nb.problems.append(problem)
+            print(f"  ! INVALID {problem}")
+            continue
         query: dict[str, Any] = {"prefix": cidr}
         if vrf:
             if vrf not in vrf_ids:
@@ -798,7 +906,11 @@ def check_prefixes(nb: "NetBox", declared: list[tuple[str, str]], vrf_ids: dict[
             query["vrf_id"] = vrf_ids[vrf]
         else:
             query["vrf_id"] = "null"
-        existing = nb.find("/api/ipam/prefixes/", **query)
+        rows = report_duplicates(
+            nb, "/api/ipam/prefixes/", f"prefix {cidr}",
+            lambda r: f"vrf={(r.get('vrf') or {}).get('name') or 'null'} tenant={(r.get('tenant') or {}).get('name') or 'null'} created={r.get('created')}",
+            **query)
+        existing = rows[0] if rows else None
         where = f"in VRF {vrf}" if vrf else "with no VRF (matched globally by CIDR)"
         if existing:
             print(f"  ok       prefix {cidr} exists {where} (id={existing['id']}); it will be updated, not created")
@@ -859,6 +971,7 @@ def main() -> int:
     for name in sorted(custom_fields):
         ensure_custom_field(nb, name, custom_fields[name])
 
+    check_branching(nb)
     vrf_ids = check_vrfs(nb, vrfs)
     check_tenants(nb, tenants)
     check_roles(nb, roles)
