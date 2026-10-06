@@ -311,7 +311,7 @@ def ensure_custom_field(nb: NetBox, name: str, field_type: str) -> None:
             # This is the failure that reaches the reconciler as
             # ERR_OPS_GENERATE_DIFF. Either side can be the wrong one, so name
             # both: the type is inferred from the policy value, so a quoted
-            # "312" against an integer field is fixed in the YAML, not in NetBox.
+            # "42" against an integer field is fixed in the YAML, not in NetBox.
             problem = (f"custom field {name}: NetBox has {actual_type}, "
                        f"the policy will send {field_type}")
             nb.problems.append(problem)
@@ -384,7 +384,7 @@ def infer_field_type(value: Any) -> str:
 
     This mirrors the backend's own detection, which keys off the YAML type, not
     off the field name. Guessing "text" for everything would report an integer
-    field such as lab_id as a mismatch, and worse, would let a quoted "312" look
+    field such as segment_id as a mismatch, and worse, would let a quoted "42" look
     correct here and then be rejected by an integer field on ingest.
     """
     if isinstance(value, str):
@@ -518,7 +518,7 @@ def check_vrfs(nb: "NetBox", configured: dict[str, dict[str, str]]) -> dict[str,
 
     Point a name-only reference at a VRF that has a tenant or an rd and nothing
     matches. Diode then creates a second, empty VRF of the same name, which
-    reads as success while splitting the lab's address space in two. This check
+    reads as success while splitting the network's address space in two. This check
     is the only place that mismatch surfaces before the data lands.
     """
     found: dict[str, int] = {}
@@ -716,8 +716,8 @@ def slugify(value: str) -> str:
     The two agree on plain names and diverge on punctuation, underscores and
     accents:
 
-        Corp.Ltd  -> django "corpltd"       old "corp-ltd"
-        Lab_A     -> django "lab_a"         old "lab-a"
+        Acme.Ltd  -> django "acmeltd"       old "acme-ltd"
+        Site_A    -> django "site_a"        old "site-a"
         R&D       -> django "rd"            old "r-d"
         Café      -> django "cafe"          old "caf"
         10.1 Net  -> django "101-net"       old "10-1-net"
@@ -733,13 +733,13 @@ def slugify(value: str) -> str:
 def _value_hint(netbox_type: str) -> str:
     """A concrete YAML example for the type NetBox actually has."""
     hints = {
-        "integer": " (unquoted, e.g. lab_id: 312)",
-        "text": ' (quoted, e.g. lab_id: "312")',
+        "integer": " (unquoted, e.g. segment_id: 42)",
+        "text": ' (quoted, e.g. segment_id: "42")',
         "boolean": " (e.g. true)",
         "decimal": " (e.g. 1.5)",
         "datetime": " (${SCAN_TIMESTAMP}, or an unquoted 2026-09-15T00:00:00Z)",
         "json": " (a YAML mapping or list)",
-        "select": ' (quoted, and one of the choice set values, e.g. lab_id: "312")',
+        "select": ' (quoted, and one of the choice set values, e.g. segment_id: "42")',
     }
     return hints.get(netbox_type, "")
 
@@ -866,7 +866,7 @@ def check_prefixes(nb: "NetBox", declared: list[tuple[str, str]], vrf_ids: dict[
 
     Matched the way the plugin matches: on (prefix, vrf). A prefix with no VRF
     is matched globally by CIDR, so a VRF-less entry can silently adopt another
-    lab's prefix — reported as such.
+    site's prefix — reported as such.
 
     The VRF is passed as vrf_id, resolved from the name by check_vrfs, because
     NetBox's prefix filter named `vrf` matches on the VRF's **route
@@ -919,7 +919,7 @@ def check_prefixes(nb: "NetBox", declared: list[tuple[str, str]], vrf_ids: dict[
             if not vrf:
                 nb.problems.append(
                     f"prefix {cidr} is declared with no VRF. It is matched globally by CIDR, so two "
-                    "labs sharing address space collapse onto one NetBox prefix. Set defaults.vrf, "
+                    "sites sharing address space collapse onto one NetBox prefix. Set defaults.vrf, "
                     "or the entry's own vrf.")
 
 

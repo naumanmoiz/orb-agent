@@ -14,8 +14,8 @@ what to set.
 Dry run by default. Nothing is written without --apply.
 
     export NETBOX_URL=... NETBOX_TOKEN=...
-    python3 merge_duplicate_vrfs.py --name VRF-Lab-312
-    python3 merge_duplicate_vrfs.py --name VRF-Lab-312 --apply
+    python3 merge_duplicate_vrfs.py --name VRF-A
+    python3 merge_duplicate_vrfs.py --name VRF-A --apply
 """
 
 from __future__ import annotations

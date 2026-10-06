@@ -12,8 +12,8 @@ as well as addresses.
 ## How nesting works
 
 NetBox derives prefix hierarchy from **containment within a VRF**. Nothing sets
-a parent. A `192.0.2.0/25` emitted into VRF `LAB-A` nests under any
-`192.0.2.0/24` already in `LAB-A`, whether that parent came from this agent or
+a parent. A `192.0.2.0/25` emitted into VRF `VRF-A` nests under any
+`192.0.2.0/24` already in `VRF-A`, whether that parent came from this agent or
 was created by hand years ago.
 
 The same mechanism files addresses. A discovered address takes the mask of the
@@ -45,7 +45,7 @@ reference has to mirror the shape of the VRF you already have:
 
 Point a name-only reference at a VRF that has a tenant or an RD and **nothing
 matches**. Diode then creates a second, empty VRF of the same name and
-reconciles into it. That reads as success while splitting the lab's address
+reconciles into it. That reads as success while splitting the network's address
 space across two VRFs.
 
 ### What is and is not part of VRF identity
@@ -83,11 +83,11 @@ checks it the same way:
 
 ```
 tenants (verified, never created):
-  ! MISMATCH tenant 312 exists (id=3) but the policy will not match it.
-            NetBox has: group=Labs
+  ! MISMATCH tenant "Tenant A" exists (id=3) but the policy will not match it.
+            NetBox has: group=Group A
             policy has: tenant_group=unset
             Diode would create a SECOND tenant with this name. Set in defaults:
-              tenant_group: "Labs"
+              tenant_group: "Group A"
 ```
 
 Setting it when the tenant has no group is equally wrong, and is reported too.
@@ -96,11 +96,11 @@ Four keys control the references:
 
 ```yaml
 defaults:
-  vrf: VRF-Lab-312      # the name
+  vrf: VRF-A      # the name
   rd: "65000:9"         # only if the prebuilt VRF has an RD
-  vrf_tenant: "312"     # only if the prebuilt VRF has a tenant
-  tenant: "312"         # the prefix's and address's tenant
-  tenant_group: "Labs"  # only if those tenants sit in a group
+  vrf_tenant: "Tenant A"     # only if the prebuilt VRF has a tenant
+  tenant: "Tenant A"         # the prefix's and address's tenant
+  tenant_group: "Group A"  # only if those tenants sit in a group
 ```
 
 `vrf_tenant` and `tenant` are deliberately separate. `tenant` describes the
@@ -114,11 +114,11 @@ and prints the config it needs:
 ```
 vrfs (verified, never created):
   ok       VRF VRF-Plain (id=1), matched on name only
-  ! MISMATCH VRF VRF-Lab-312 exists (id=2) but the policy will not match it.
-            NetBox has: rd=null, tenant=312
+  ! MISMATCH VRF VRF-A exists (id=2) but the policy will not match it.
+            NetBox has: rd=null, tenant=Tenant A
             policy has: rd=unset, vrf_tenant=unset
             Diode would create a SECOND VRF with this name. Set in defaults:
-              vrf_tenant: "312"
+              vrf_tenant: "Tenant A"
   ! MISSING VRF 'VRF-Nope' does not exist. Diode would create an empty one...
 ```
 
@@ -131,8 +131,8 @@ The duplicate is recognisable by shape: same name, newer `created`, no tenant
 and no rd, and it holds the objects while the prebuilt one is empty.
 
 ```bash
-python3 tools/netbox-bootstrap/merge_duplicate_vrfs.py --name VRF-Lab-312
-python3 tools/netbox-bootstrap/merge_duplicate_vrfs.py --name VRF-Lab-312 --apply
+python3 tools/netbox-bootstrap/merge_duplicate_vrfs.py --name VRF-A
+python3 tools/netbox-bootstrap/merge_duplicate_vrfs.py --name VRF-A --apply
 ```
 
 Dry run by default. It keeps the oldest VRF (override with `--keep <id>`), moves
@@ -153,22 +153,22 @@ space spread across several prebuilt VRFs:
 ```yaml
 config:
   defaults:
-    vrf: LAB-A                  # used by entries that name none
-    tenant: LAB-A
-    tenant_group: Labs
+    vrf: VRF-A                  # used by entries that name none
+    tenant: Tenant A
+    tenant_group: Group A
 scope:
-  targets: [10.1.0.0/16, 10.2.0.0/16]
+  targets: [198.51.100.0/24, 203.0.113.0/24]
   subnet_map:
-    - prefix: 10.1.0.0/16
-      vrf: CORP                 # this subnet lives in CORP, not LAB-A
-      vrf_tenant: Corp          # because the prebuilt CORP VRF has a tenant
-      tenant: Corp              # owns the prefix and the addresses in it
-    - prefix: 10.2.0.0/16       # no vrf: falls back to defaults.vrf
-      tenant: Lab-A
+    - prefix: 198.51.100.0/24
+      vrf: VRF-B                 # this subnet lives in VRF-B, not VRF-A
+      vrf_tenant: Tenant B          # because the prebuilt VRF-B VRF has a tenant
+      tenant: Tenant B              # owns the prefix and the addresses in it
+    - prefix: 203.0.113.0/24       # no vrf: falls back to defaults.vrf
+      tenant: Tenant A
 ```
 
-`10.1.0.5` is emitted as `10.1.0.5/16` in VRF `CORP` under tenant `Corp`;
-`10.2.0.5` as `10.2.0.5/16` in `LAB-A` under `Lab-A`. Each address reaches
+`198.51.100.5` is emitted as `198.51.100.5/24` in VRF `VRF-B` under tenant `Tenant B`;
+`203.0.113.5` as `203.0.113.5/24` in `VRF-A` under `Tenant A`. Each address reaches
 NetBox in the same VRF as the prefix declared for its subnet, which is what
 lets NetBox file one under the other.
 
@@ -198,21 +198,21 @@ win the longest-prefix match. Give each VRF its own policy; one agent runs many.
 ```yaml
 config:
   defaults:
-    vrf: LAB-A            # must already exist in NetBox
-    tenant: LAB-A
+    vrf: VRF-A            # must already exist in NetBox
+    tenant: Tenant A
     prefix:               # defaults for the emitted prefixes
       status: active
-      role: lab-data
+      role: data
 scope:
   targets: [192.0.2.0/24]   # what nmap scans
   subnet_map:               # what becomes a prefix
     - prefix: 192.0.2.0/24
       status: container
-      role: lab-aggregate
+      role: aggregate
     - prefix: 192.0.2.0/25
-      role: lab-servers
+      role: servers
       custom_fields:
-        lab_id: "312"
+        segment_id: "42"
 ```
 
 ### `scope.subnet_map`
@@ -292,14 +292,14 @@ hierarchy is declared.
 
 An entry left with no VRF at all — no `vrf` of its own and no `defaults.vrf` —
 is warned about rather than rejected, by prefix. Its prefix is then matched
-globally by CIDR, so two labs sharing address space collapse onto one NetBox
+globally by CIDR, so two sites sharing address space collapse onto one NetBox
 prefix.
 
 ## Verifying
 
 ```bash
 python3 tools/netbox-bootstrap/bootstrap_custom_fields.py \
-  --config /opt/orb-agent/agent.yaml --dry-run
+  --config /path/to/orb-config/agent.yaml --dry-run
 ```
 
 Checks the custom fields exist on **both** `ipam.ipaddress` and `ipam.prefix`;
@@ -310,8 +310,8 @@ lists every declared prefix, saying which NetBox already holds:
 
 ```
 subnet_map prefixes (created only when missing):
-  ok       prefix 10.1.0.0/16 exists in VRF CORP (id=44); it will be updated, not created
-  + create prefix 10.2.0.0/16 does not exist in VRF LAB-A; Diode will create it
+  ok       prefix 198.51.100.0/24 exists in VRF VRF-B (id=44); it will be updated, not created
+  + create prefix 203.0.113.0/24 does not exist in VRF VRF-A; Diode will create it
 ```
 
 That listing is how "created only when missing" stops being a claim you have to
@@ -325,9 +325,9 @@ other creates a duplicate.
 Then dry-run the agent and confirm the payload:
 
 ```json
-{"prefix": {"prefix": "192.0.2.0/24", "vrf": {"name": "LAB-A"}, "status": "container"}}
-{"prefix": {"prefix": "192.0.2.0/25", "vrf": {"name": "LAB-A"}, "role": {"name": "lab-servers"}}}
-{"ip_address": {"address": "192.0.2.10/25", "vrf": {"name": "LAB-A"}}}
+{"prefix": {"prefix": "192.0.2.0/24", "vrf": {"name": "VRF-A"}, "status": "container"}}
+{"prefix": {"prefix": "192.0.2.0/25", "vrf": {"name": "VRF-A"}, "role": {"name": "servers"}}}
+{"ip_address": {"address": "192.0.2.10/25", "vrf": {"name": "VRF-A"}}}
 ```
 
 Three things to check: all three carry the **same** `vrf.name`; the `vrf` object

@@ -11,8 +11,8 @@ import (
 // entry containing it.
 //
 // Entries are held longest-mask-first so the first containing entry is the
-// answer: 10.10.20.200 resolves to 10.10.20.128/25 rather than the 10.10.20.0/24
-// or 10.10.0.0/16 that also contain it. Ties on mask length cannot happen, since
+// answer: 192.0.2.200 resolves to 192.0.2.192/26 rather than the 192.0.2.128/25
+// or 192.0.2.0/24 that also contain it. Ties on mask length cannot happen, since
 // ValidateSubnetMap rejects duplicate networks, and two distinct networks of the
 // same length never overlap.
 type subnetMatcher struct {

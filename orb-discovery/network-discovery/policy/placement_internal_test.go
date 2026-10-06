@@ -18,8 +18,8 @@ import (
 // subnets that belong to two different prebuilt VRFs.
 func twoVrfMap() []config.SubnetMapEntry {
 	return []config.SubnetMapEntry{
-		{Prefix: "192.0.2.0/25", Vrf: "CORP", Tenant: "Corp"},
-		{Prefix: "192.0.2.128/25", Vrf: "LAB", VrfTenant: "Labs", Tenant: "Lab-A"},
+		{Prefix: "192.0.2.0/25", Vrf: "VRF-B", Tenant: "Tenant B"},
+		{Prefix: "192.0.2.128/25", Vrf: "VRF-A", VrfTenant: "Group A", Tenant: "Tenant A"},
 	}
 }
 
@@ -30,39 +30,39 @@ func TestAddressTakesItsSubnetsVrfAndTenant(t *testing.T) {
 	r := prefixRunner(t, config.Defaults{Vrf: "FALLBACK", Tenant: "Fallback"}, entries)
 	r.targets = parseTargets([]string{"192.0.2.0/24"})
 
-	corpAddr, corpEntry := r.resolveAddress("192.0.2.10", "/32")
-	corp, _ := r.ipAddressEntity(scannedHost("a.example.net"), corpAddr, "192.0.2.10", corpEntry, "p", nil)
-	labAddr, labEntry := r.resolveAddress("192.0.2.200", "/32")
-	lab, _ := r.ipAddressEntity(scannedHost("b.example.net"), labAddr, "192.0.2.200", labEntry, "p", nil)
+	vrfBAddr, vrfBEntry := r.resolveAddress("192.0.2.10", "/32")
+	vrfB, _ := r.ipAddressEntity(scannedHost("a.example.net"), vrfBAddr, "192.0.2.10", vrfBEntry, "p", nil)
+	vrfAAddr, vrfAEntry := r.resolveAddress("192.0.2.200", "/32")
+	vrfA, _ := r.ipAddressEntity(scannedHost("b.example.net"), vrfAAddr, "192.0.2.200", vrfAEntry, "p", nil)
 
-	require.NotNil(t, corp.Vrf)
-	require.NotNil(t, lab.Vrf)
-	assert.Equal(t, "CORP", *corp.Vrf.Name)
-	assert.Equal(t, "LAB", *lab.Vrf.Name)
-	assert.Equal(t, "Corp", *corp.Tenant.Name)
-	assert.Equal(t, "Lab-A", *lab.Tenant.Name)
+	require.NotNil(t, vrfB.Vrf)
+	require.NotNil(t, vrfA.Vrf)
+	assert.Equal(t, "VRF-B", *vrfB.Vrf.Name)
+	assert.Equal(t, "VRF-A", *vrfA.Vrf.Name)
+	assert.Equal(t, "Tenant B", *vrfB.Tenant.Name)
+	assert.Equal(t, "Tenant A", *vrfA.Tenant.Name)
 
 	// Each prefix matches the addresses inside it, which is what lets NetBox
 	// nest them.
 	prefixes := r.prefixEntities(nil, "p")
 	require.Len(t, prefixes, 2)
-	assert.Equal(t, "CORP", *prefixes[0].(*diode.Prefix).Vrf.Name)
-	assert.Equal(t, "LAB", *prefixes[1].(*diode.Prefix).Vrf.Name)
-	assert.Equal(t, "Corp", *prefixes[0].(*diode.Prefix).Tenant.Name)
+	assert.Equal(t, "VRF-B", *prefixes[0].(*diode.Prefix).Vrf.Name)
+	assert.Equal(t, "VRF-A", *prefixes[1].(*diode.Prefix).Vrf.Name)
+	assert.Equal(t, "Tenant B", *prefixes[0].(*diode.Prefix).Tenant.Name)
 }
 
 // The VRF's three identity fields are taken from one source or the other, never
 // mixed. A reference pairing an entry's name with the defaults' rd describes a
 // VRF that does not exist, and Diode answers that by creating one.
 func TestEntryVrfDoesNotInheritDefaultsIdentity(t *testing.T) {
-	entries := []config.SubnetMapEntry{{Prefix: "192.0.2.0/24", Vrf: "CORP"}}
+	entries := []config.SubnetMapEntry{{Prefix: "192.0.2.0/24", Vrf: "VRF-B"}}
 	r := prefixRunner(t, config.Defaults{
-		Vrf: "LAB", Rd: "65000:9", VrfTenant: "Labs", TenantGroup: "Groups",
+		Vrf: "VRF-A", Rd: "65000:9", VrfTenant: "Group A", TenantGroup: "Groups",
 	}, entries)
 
 	vrf := r.prefixEntities(nil, "p")[0].(*diode.Prefix).Vrf
 	require.NotNil(t, vrf)
-	assert.Equal(t, "CORP", *vrf.Name)
+	assert.Equal(t, "VRF-B", *vrf.Name)
 	assert.Nil(t, vrf.Rd, "the defaults' rd describes the defaults' VRF, not this one")
 	assert.Nil(t, vrf.Tenant, "the defaults' vrf_tenant describes the defaults' VRF, not this one")
 }
@@ -71,11 +71,11 @@ func TestEntryVrfDoesNotInheritDefaultsIdentity(t *testing.T) {
 // which is the pre-existing single-VRF policy, unchanged.
 func TestEntryWithoutVrfInheritsTheDefaults(t *testing.T) {
 	entries := []config.SubnetMapEntry{{Prefix: "192.0.2.0/24"}}
-	r := prefixRunner(t, config.Defaults{Vrf: "LAB", Rd: "65000:9"}, entries)
+	r := prefixRunner(t, config.Defaults{Vrf: "VRF-A", Rd: "65000:9"}, entries)
 
 	vrf := r.prefixEntities(nil, "p")[0].(*diode.Prefix).Vrf
 	require.NotNil(t, vrf)
-	assert.Equal(t, "LAB", *vrf.Name)
+	assert.Equal(t, "VRF-A", *vrf.Name)
 	require.NotNil(t, vrf.Rd)
 	assert.Equal(t, "65000:9", *vrf.Rd)
 }
@@ -84,10 +84,10 @@ func TestEntryWithoutVrfInheritsTheDefaults(t *testing.T) {
 // tenants usually share one, and an entry whose tenant lives elsewhere says so.
 func TestEntryTenantCarriesTheRightGroup(t *testing.T) {
 	entries := []config.SubnetMapEntry{
-		{Prefix: "192.0.2.0/25", Tenant: "Corp"},
+		{Prefix: "192.0.2.0/25", Tenant: "Tenant B"},
 		{Prefix: "192.0.2.128/25", Tenant: "Partner", TenantGroup: "External"},
 	}
-	r := prefixRunner(t, config.Defaults{Vrf: "LAB", Tenant: "Fallback", TenantGroup: "Internal"}, entries)
+	r := prefixRunner(t, config.Defaults{Vrf: "VRF-A", Tenant: "Fallback", TenantGroup: "Internal"}, entries)
 
 	prefixes := r.prefixEntities(nil, "p")
 	inherited := prefixes[0].(*diode.Prefix).Tenant
@@ -102,7 +102,7 @@ func TestEntryTenantCarriesTheRightGroup(t *testing.T) {
 // a deployment can own its prefixes and its addresses with different tenants.
 // The entry still wins over both.
 func TestPrefixTenantPrecedence(t *testing.T) {
-	defaults := config.Defaults{Vrf: "LAB", Tenant: "AddressOwner"}
+	defaults := config.Defaults{Vrf: "VRF-A", Tenant: "AddressOwner"}
 	defaults.Prefix.Tenant = "PrefixOwner"
 
 	assert.Equal(t, "PrefixOwner", *prefixPlacement(defaults, nil).tenant.Name)
@@ -119,7 +119,7 @@ func TestPrefixTenantPrecedence(t *testing.T) {
 func TestSubnetMapOutranksUseTargetMasks(t *testing.T) {
 	off := false
 	entries := []config.SubnetMapEntry{{Prefix: "192.0.2.0/25"}}
-	r := prefixRunner(t, config.Defaults{Vrf: "LAB"}, entries)
+	r := prefixRunner(t, config.Defaults{Vrf: "VRF-A"}, entries)
 	r.targets = parseTargets([]string{"192.0.2.0/24"})
 	r.scope.UseTargetMasks = &off
 
@@ -137,10 +137,10 @@ func TestSubnetMapOutranksUseTargetMasks(t *testing.T) {
 // it as well as its prefix.
 func TestEntryCustomFieldsReachTheAddress(t *testing.T) {
 	entries := []config.SubnetMapEntry{
-		{Prefix: "192.0.2.0/25", CustomFields: map[string]any{"lab_id": "312"}},
+		{Prefix: "192.0.2.0/25", CustomFields: map[string]any{"segment_id": "42"}},
 		{Prefix: "192.0.2.128/25"},
 	}
-	r := prefixRunner(t, config.Defaults{Vrf: "LAB"}, entries)
+	r := prefixRunner(t, config.Defaults{Vrf: "VRF-A"}, entries)
 	r.targets = parseTargets([]string{"192.0.2.0/24"})
 
 	base := map[string]any{"discovery_source": "network_discovery"}
@@ -149,19 +149,19 @@ func TestEntryCustomFieldsReachTheAddress(t *testing.T) {
 	inside, entry := r.resolveAddress("192.0.2.10", "/32")
 	ip, _ := r.ipAddressEntity(scannedHost("a.example.net"), inside, "192.0.2.10", entry, "p",
 		entryCustomFields(base, entry, cache))
-	assert.Contains(t, ip.CustomFields, "lab_id")
+	assert.Contains(t, ip.CustomFields, "segment_id")
 	assert.Contains(t, ip.CustomFields, "discovery_source")
 
 	// A sibling subnet that declares none keeps the policy-wide fields alone.
 	outside, other := r.resolveAddress("192.0.2.200", "/32")
 	sibling, _ := r.ipAddressEntity(scannedHost("b.example.net"), outside, "192.0.2.200", other, "p",
 		entryCustomFields(base, other, cache))
-	assert.NotContains(t, sibling.CustomFields, "lab_id")
+	assert.NotContains(t, sibling.CustomFields, "segment_id")
 	assert.Contains(t, sibling.CustomFields, "discovery_source")
 
 	// The policy-wide map itself is untouched, so the merge cannot leak between
 	// subnets over a run.
-	assert.NotContains(t, base, "lab_id")
+	assert.NotContains(t, base, "segment_id")
 }
 
 // TestDryRunMultiVrfGolden is the multi-VRF counterpart to TestDryRunPrefixGolden:
@@ -182,15 +182,15 @@ func TestDryRunMultiVrfGolden(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 
 	entries := []config.SubnetMapEntry{
-		{Prefix: "10.1.0.0/24", Vrf: "CORP", VrfTenant: "Corp", Tenant: "Corp"},
-		{Prefix: "10.2.0.0/24", Tenant: "Lab-A"},
+		{Prefix: "198.51.100.0/24", Vrf: "VRF-B", VrfTenant: "Tenant B", Tenant: "Tenant B"},
+		{Prefix: "203.0.113.0/24", Tenant: "Tenant A"},
 	}
-	r := prefixRunner(t, config.Defaults{Vrf: "LAB-A", Tenant: "Fallback", TenantGroup: "Labs"}, entries)
+	r := prefixRunner(t, config.Defaults{Vrf: "VRF-A", Tenant: "Fallback", TenantGroup: "Group A"}, entries)
 	r.client = client
-	r.targets = parseTargets([]string{"10.1.0.0/24", "10.2.0.0/24"})
+	r.targets = parseTargets([]string{"198.51.100.0/24", "203.0.113.0/24"})
 
 	entities := r.prefixEntities(nil, "multi")
-	for _, addr := range []string{"10.1.0.5", "10.2.0.5"} {
+	for _, addr := range []string{"198.51.100.5", "203.0.113.5"} {
 		masked, entry := r.resolveAddress(addr, "/32")
 		ip, _ := r.ipAddressEntity(scannedHost(""), masked, addr, entry, "multi", nil)
 		entities = append(entities, ip)
@@ -227,43 +227,43 @@ func TestDryRunMultiVrfGolden(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &payload))
 	require.Len(t, payload.Entities, 4)
 
-	corpPrefix, labPrefix := payload.Entities[0].Prefix, payload.Entities[1].Prefix
-	corpAddr, labAddr := payload.Entities[2].IPAddress, payload.Entities[3].IPAddress
-	require.NotNil(t, corpPrefix)
-	require.NotNil(t, labPrefix)
-	require.NotNil(t, corpAddr)
-	require.NotNil(t, labAddr)
+	vrfBPrefix, vrfAPrefix := payload.Entities[0].Prefix, payload.Entities[1].Prefix
+	vrfBAddr, vrfAAddr := payload.Entities[2].IPAddress, payload.Entities[3].IPAddress
+	require.NotNil(t, vrfBPrefix)
+	require.NotNil(t, vrfAPrefix)
+	require.NotNil(t, vrfBAddr)
+	require.NotNil(t, vrfAAddr)
 
-	assert.Equal(t, "10.1.0.0/24", corpPrefix.Prefix)
-	assert.Equal(t, "10.2.0.0/24", labPrefix.Prefix)
-	assert.Equal(t, "10.1.0.5/24", corpAddr.Address, "the address takes its subnet's mask")
-	assert.Equal(t, "10.2.0.5/24", labAddr.Address)
+	assert.Equal(t, "198.51.100.0/24", vrfBPrefix.Prefix)
+	assert.Equal(t, "203.0.113.0/24", vrfAPrefix.Prefix)
+	assert.Equal(t, "198.51.100.5/24", vrfBAddr.Address, "the address takes its subnet's mask")
+	assert.Equal(t, "203.0.113.5/24", vrfAAddr.Address)
 
 	// Each address is in the VRF of its own prefix, which is what lets NetBox
 	// file one under the other.
-	assert.Equal(t, "CORP", corpPrefix.Vrf.Name)
-	assert.Equal(t, "CORP", corpAddr.Vrf.Name)
-	assert.Equal(t, "LAB-A", labPrefix.Vrf.Name)
-	assert.Equal(t, "LAB-A", labAddr.Vrf.Name)
+	assert.Equal(t, "VRF-B", vrfBPrefix.Vrf.Name)
+	assert.Equal(t, "VRF-B", vrfBAddr.Vrf.Name)
+	assert.Equal(t, "VRF-A", vrfAPrefix.Vrf.Name)
+	assert.Equal(t, "VRF-A", vrfAAddr.Vrf.Name)
 
 	// The entry's vrf carries its own vrf_tenant and nothing from the defaults;
 	// the entry that names no vrf gets the defaults' name-only reference.
-	require.NotNil(t, corpAddr.Vrf.Tenant)
-	assert.Equal(t, "Corp", corpAddr.Vrf.Tenant["name"])
-	assert.Nil(t, labAddr.Vrf.Tenant, "defaults.vrf has no vrf_tenant, so its reference must stay name-only")
+	require.NotNil(t, vrfBAddr.Vrf.Tenant)
+	assert.Equal(t, "Tenant B", vrfBAddr.Vrf.Tenant["name"])
+	assert.Nil(t, vrfAAddr.Vrf.Tenant, "defaults.vrf has no vrf_tenant, so its reference must stay name-only")
 
 	// Each entry's tenant owns its prefix and its addresses, and every tenant
 	// reference carries the group, without which none of them would be found.
-	for _, r := range []*ref{corpPrefix.Tenant, corpAddr.Tenant} {
+	for _, r := range []*ref{vrfBPrefix.Tenant, vrfBAddr.Tenant} {
 		require.NotNil(t, r)
-		assert.Equal(t, "Corp", r.Name)
+		assert.Equal(t, "Tenant B", r.Name)
 	}
-	for _, r := range []*ref{labPrefix.Tenant, labAddr.Tenant} {
+	for _, r := range []*ref{vrfAPrefix.Tenant, vrfAAddr.Tenant} {
 		require.NotNil(t, r)
-		assert.Equal(t, "Lab-A", r.Name)
+		assert.Equal(t, "Tenant A", r.Name)
 	}
-	for _, r := range []*ref{corpPrefix.Tenant, corpAddr.Tenant, labPrefix.Tenant, labAddr.Tenant} {
+	for _, r := range []*ref{vrfBPrefix.Tenant, vrfBAddr.Tenant, vrfAPrefix.Tenant, vrfAAddr.Tenant} {
 		require.NotNil(t, r.Group, "a group-less tenant reference matches nothing and Diode duplicates it")
-		assert.Equal(t, "Labs", r.Group["name"])
+		assert.Equal(t, "Group A", r.Group["name"])
 	}
 }

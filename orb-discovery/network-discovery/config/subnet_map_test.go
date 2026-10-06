@@ -29,7 +29,7 @@ func TestParsePolicyWithoutSubnetMap(t *testing.T) {
 policies:
   legacy:
     config:
-      defaults: {vrf: LAB-A, tenant: LAB-A}
+      defaults: {vrf: VRF-A, tenant: VRF-A}
     scope:
       targets: [192.0.2.0/24]
 `), &policies))
@@ -42,33 +42,33 @@ func TestParsePolicyWithSubnetMap(t *testing.T) {
 	var policies config.Policies
 	require.NoError(t, yaml.Unmarshal([]byte(`
 policies:
-  lab_a_scan:
+  vrf_a_scan:
     config:
       defaults:
-        vrf: LAB-A
+        vrf: VRF-A
         prefix:
           status: active
-          role: lab-data
+          role: data
           is_pool: false
     scope:
       targets: [192.0.2.0/24]
       subnet_map:
         - prefix: 192.0.2.0/24
           status: container
-          role: lab-aggregate
+          role: aggregate
         - prefix: 192.0.2.0/25
-          role: lab-servers
+          role: servers
           custom_fields:
-            lab_id: "312"
+            segment_id: "42"
 `), &policies))
 
-	policy := policies.Policies["lab_a_scan"]
-	assert.Equal(t, "lab-data", policy.Config.Defaults.Prefix.Role)
+	policy := policies.Policies["vrf_a_scan"]
+	assert.Equal(t, "data", policy.Config.Defaults.Prefix.Role)
 	require.NotNil(t, policy.Config.Defaults.Prefix.IsPool)
 	assert.False(t, *policy.Config.Defaults.Prefix.IsPool, "an explicit false must stay distinguishable from an omitted key")
 	require.Len(t, policy.Scope.SubnetMap, 2)
 	assert.Equal(t, "container", policy.Scope.SubnetMap[0].Status)
-	assert.Equal(t, "312", policy.Scope.SubnetMap[1].CustomFields["lab_id"])
+	assert.Equal(t, "42", policy.Scope.SubnetMap[1].CustomFields["segment_id"])
 }
 
 // A typo inside a subnet_map entry is an error, not a dropped attribute:
@@ -148,10 +148,10 @@ func TestWarnSubnetMapCoverage(t *testing.T) {
 // A per-entry custom field extends the policy block without mutating it.
 func TestMergeCustomFields(t *testing.T) {
 	base := map[string]any{"discovery_source": "network_discovery"}
-	merged := config.MergeCustomFields(base, map[string]any{"lab_id": "312"})
+	merged := config.MergeCustomFields(base, map[string]any{"segment_id": "42"})
 	assert.Equal(t, "network_discovery", merged["discovery_source"])
-	assert.Equal(t, "312", merged["lab_id"])
-	assert.NotContains(t, base, "lab_id", "the base map must not be mutated")
+	assert.Equal(t, "42", merged["segment_id"])
+	assert.NotContains(t, base, "segment_id", "the base map must not be mutated")
 
 	assert.Equal(t, base, config.MergeCustomFields(base, nil))
 }
@@ -167,14 +167,14 @@ func TestSubnetMapRejectsVrfFieldsWithoutVrf(t *testing.T) {
 	assert.Contains(t, err.Error(), "rd is set without vrf")
 
 	err = config.ValidateSubnetMap([]config.SubnetMapEntry{
-		{Prefix: "192.0.2.0/24", VrfTenant: "Labs"},
+		{Prefix: "192.0.2.0/24", VrfTenant: "Group A"},
 	}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "vrf_tenant is set without vrf")
 
 	// With a vrf of its own, both are what make the reference match.
 	require.NoError(t, config.ValidateSubnetMap([]config.SubnetMapEntry{
-		{Prefix: "192.0.2.0/24", Vrf: "LAB", Rd: "65000:9", VrfTenant: "Labs"},
+		{Prefix: "192.0.2.0/24", Vrf: "VRF-A", Rd: "65000:9", VrfTenant: "Group A"},
 	}, nil))
 }
 
@@ -182,8 +182,8 @@ func TestSubnetMapRejectsVrfFieldsWithoutVrf(t *testing.T) {
 // answered, so one policy cannot carry both.
 func TestSubnetMapRejectsDuplicateAcrossVrfs(t *testing.T) {
 	err := config.ValidateSubnetMap([]config.SubnetMapEntry{
-		{Prefix: "192.0.2.0/24", Vrf: "CORP"},
-		{Prefix: "192.0.2.0/24", Vrf: "LAB"},
+		{Prefix: "192.0.2.0/24", Vrf: "VRF-B"},
+		{Prefix: "192.0.2.0/24", Vrf: "VRF-A"},
 	}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "give each VRF its own policy")
@@ -195,16 +195,16 @@ func TestSubnetMapAcceptsPlacementKeys(t *testing.T) {
 	var entries []config.SubnetMapEntry
 	require.NoError(t, yaml.Unmarshal([]byte(`
 - prefix: 192.0.2.0/24
-  vrf: CORP
+  vrf: VRF-B
   rd: "65000:1"
-  vrf_tenant: Corp
-  tenant: Corp
+  vrf_tenant: Tenant B
+  tenant: Tenant B
   tenant_group: Internal
 `), &entries))
 	require.Len(t, entries, 1)
-	assert.Equal(t, "CORP", entries[0].Vrf)
+	assert.Equal(t, "VRF-B", entries[0].Vrf)
 	assert.Equal(t, "65000:1", entries[0].Rd)
-	assert.Equal(t, "Corp", entries[0].VrfTenant)
-	assert.Equal(t, "Corp", entries[0].Tenant)
+	assert.Equal(t, "Tenant B", entries[0].VrfTenant)
+	assert.Equal(t, "Tenant B", entries[0].Tenant)
 	assert.Equal(t, "Internal", entries[0].TenantGroup)
 }

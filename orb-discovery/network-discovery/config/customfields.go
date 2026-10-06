@@ -80,7 +80,7 @@ type CustomFieldTokens struct {
 //	time.Time  -> datetime    map/slice -> json
 //
 // Only a value that is exactly ${NAME} is substituted, matching the whole-value
-// convention the backend already applies to its flags; "lab-${NAME}" is left
+// convention the backend already applies to its flags; "site-${NAME}" is left
 // alone. A nil value is dropped rather than sent, because a null custom field
 // would clear whatever NetBox already holds.
 func ResolveCustomFields(raw map[string]any, tokens CustomFieldTokens) (map[string]any, error) {

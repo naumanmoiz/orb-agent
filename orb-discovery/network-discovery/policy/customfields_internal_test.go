@@ -24,7 +24,7 @@ func testLogger() *slog.Logger {
 func runnerWithCustomFields(fields map[string]any, precision string) *Runner {
 	return &Runner{
 		logger:    testLogger(),
-		agentName: "lab-agent-01",
+		agentName: "agent-01",
 		config: config.PolicyConfig{
 			CustomFields:       fields,
 			TimestampPrecision: precision,
@@ -43,14 +43,14 @@ func TestIPAddressEntityCarriesCustomFields(t *testing.T) {
 		"discovery_policy":    "${POLICY_NAME}",
 		"discovery_last_seen": "${SCAN_TIMESTAMP}",
 		"discovery_source":    "network_discovery",
-	}, config.CustomFieldTokens{AgentName: "lab-agent-01", PolicyName: "lab_scan", ScanTime: scanTime})
+	}, config.CustomFieldTokens{AgentName: "agent-01", PolicyName: "subnet_scan", ScanTime: scanTime})
 	require.NoError(t, err)
 
-	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.10/24", "192.0.2.10", nil, "lab_scan", resolved)
+	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.10/24", "192.0.2.10", nil, "subnet_scan", resolved)
 
 	require.Len(t, ip.CustomFields, 4)
-	assert.Equal(t, diode.CustomFieldValueText("lab-agent-01"), ip.CustomFields["discovery_agent"].Value)
-	assert.Equal(t, diode.CustomFieldValueText("lab_scan"), ip.CustomFields["discovery_policy"].Value)
+	assert.Equal(t, diode.CustomFieldValueText("agent-01"), ip.CustomFields["discovery_agent"].Value)
+	assert.Equal(t, diode.CustomFieldValueText("subnet_scan"), ip.CustomFields["discovery_policy"].Value)
 	assert.Equal(t, diode.CustomFieldValueText("network_discovery"), ip.CustomFields["discovery_source"].Value)
 	// Datetime, not text: a NetBox datetime custom field rejects a string.
 	assert.IsType(t, diode.CustomFieldValueDatetime{}, ip.CustomFields["discovery_last_seen"].Value)
@@ -60,7 +60,7 @@ func TestIPAddressEntityCarriesCustomFields(t *testing.T) {
 // backend emitted before the feature existed.
 func TestIPAddressEntityUnchangedWithoutCustomFields(t *testing.T) {
 	r := runnerWithCustomFields(nil, "")
-	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.10/24", "192.0.2.10", nil, "lab_scan", nil)
+	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.10/24", "192.0.2.10", nil, "subnet_scan", nil)
 	assert.Nil(t, ip.CustomFields)
 	assert.Equal(t, "192.0.2.10/24", *ip.Address)
 }
@@ -70,7 +70,7 @@ func TestIPAddressEntitySurvivesABadCustomFieldValue(t *testing.T) {
 	buf := bytes.NewBuffer(nil)
 	r := &Runner{logger: slog.New(slog.NewTextHandler(buf, nil))}
 
-	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.10/24", "192.0.2.10", nil, "lab_scan",
+	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.10/24", "192.0.2.10", nil, "subnet_scan",
 		map[string]any{"ok_field": "fine", "bad_field": struct{ X int }{1}})
 
 	assert.Equal(t, "192.0.2.10/24", *ip.Address)
@@ -111,7 +111,7 @@ func TestDryRunGolden(t *testing.T) {
 	t.Cleanup(func() { _ = client.Close() })
 
 	cfg := config.PolicyConfig{
-		Defaults: config.Defaults{Vrf: "LAB-AUS-01", Tenant: "LAB-AUS-01"},
+		Defaults: config.Defaults{Vrf: "VRF-A", Tenant: "VRF-A"},
 		CustomFields: map[string]any{
 			"discovery_agent":     "${AGENT_NAME}",
 			"discovery_policy":    "${POLICY_NAME}",
@@ -119,17 +119,17 @@ func TestDryRunGolden(t *testing.T) {
 			"discovery_source":    "network_discovery",
 		},
 	}
-	r := &Runner{logger: testLogger(), agentName: "lab-agent-01", client: client, config: cfg}
+	r := &Runner{logger: testLogger(), agentName: "agent-01", client: client, config: cfg}
 
 	resolved, err := config.ResolveCustomFields(cfg.CustomFields, config.CustomFieldTokens{
 		AgentName:  r.agentName,
-		PolicyName: "lab_scan",
+		PolicyName: "subnet_scan",
 		ScanTime: config.TruncateScanTime(
 			time.Date(2026, 9, 15, 10, 30, 45, 0, time.UTC), cfg.ResolvedTimestampPrecision()),
 	})
 	require.NoError(t, err)
 
-	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.200/24", "192.0.2.200", nil, "lab_scan", resolved)
+	ip, _ := r.ipAddressEntity(scannedHost("host.example.net"), "192.0.2.200/24", "192.0.2.200", nil, "subnet_scan", resolved)
 	_, err = client.Ingest(context.Background(), []diode.Entity{ip})
 	require.NoError(t, err)
 
@@ -156,8 +156,8 @@ func TestDryRunGolden(t *testing.T) {
 
 	entity := payload.Entities[0].IPAddress
 	assert.Equal(t, "192.0.2.200/24", entity.Address)
-	assert.Equal(t, "lab-agent-01", entity.CustomFields["discovery_agent"]["text"])
-	assert.Equal(t, "lab_scan", entity.CustomFields["discovery_policy"]["text"])
+	assert.Equal(t, "agent-01", entity.CustomFields["discovery_agent"]["text"])
+	assert.Equal(t, "subnet_scan", entity.CustomFields["discovery_policy"]["text"])
 	assert.Equal(t, "network_discovery", entity.CustomFields["discovery_source"]["text"])
 	// Truncated to the day, and carried on the datetime variant rather than text.
 	assert.Equal(t, "2026-09-15T00:00:00Z", entity.CustomFields["discovery_last_seen"]["datetime"])

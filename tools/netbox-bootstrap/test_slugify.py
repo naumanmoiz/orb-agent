@@ -20,20 +20,20 @@ from bootstrap_custom_fields import slugify
 # (name, what django.utils.text.slugify actually returns)
 DJANGO_SLUGS = [
     # plain names -- where the old hand-rolled version agreed
-    ("Corp", "corp"),
-    ("Lab-A", "lab-a"),
-    ("Corp Ltd", "corp-ltd"),
-    ("Corp & Co", "corp-co"),
+    ("Acme", "acme"),
+    ("Site-A", "site-a"),
+    ("Acme Ltd", "acme-ltd"),
+    ("Acme & Co", "acme-co"),
     ("ACME  Inc.", "acme-inc"),
-    ("Corp--Ltd", "corp-ltd"),
+    ("Acme--Ltd", "acme-ltd"),
     # underscores survive: \w includes _
-    ("Lab_A", "lab_a"),
+    ("Site_A", "site_a"),
     # punctuation is DELETED, not turned into a separator
-    ("Corp.Ltd", "corpltd"),
+    ("Acme.Ltd", "acmeltd"),
     ("R&D", "rd"),
     ("a/b/c", "abc"),
     ("10.1 Net", "101-net"),
-    ("AT&T Corp.", "att-corp"),
+    ("AT&T Acme.", "att-acme"),
     ("50% Ltd", "50-ltd"),
     ("tenant(old)", "tenantold"),
     ("EMEA/APAC", "emeaapac"),
@@ -70,8 +70,8 @@ def test_regressions_the_old_implementation_introduced():
     it produced a slug NetBox would never generate, and check_roles then
     looked up a role that could not exist.
     """
-    assert slugify("Corp.Ltd") != "corp-ltd"
-    assert slugify("Lab_A") != "lab-a"
+    assert slugify("Acme.Ltd") != "acme-ltd"
+    assert slugify("Site_A") != "site-a"
     assert slugify("R&D") != "r-d"
     assert slugify("Café") != "caf"
     assert slugify("10.1 Net") != "10-1-net"

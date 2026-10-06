@@ -14,8 +14,8 @@ import (
 
 func testTokens() config.CustomFieldTokens {
 	return config.CustomFieldTokens{
-		AgentName:  "lab-agent-01",
-		PolicyName: "lab_scan",
+		AgentName:  "agent-01",
+		PolicyName: "subnet_scan",
 		ScanTime:   time.Date(2026, 9, 15, 10, 30, 45, 123456789, time.UTC),
 	}
 }
@@ -31,8 +31,8 @@ policies:
       schedule: "* * * * *"
       timeout: 10
       defaults:
-        vrf: LAB
-        tenant: LAB
+        vrf: VRF-A
+        tenant: Tenant A
         tags: [orb]
     scope:
       targets: [192.0.2.0/24]
@@ -40,7 +40,7 @@ policies:
 
 	policy := policies.Policies["legacy"]
 	assert.Equal(t, []string{"192.0.2.0/24"}, policy.Scope.Targets)
-	assert.Equal(t, "LAB", policy.Config.Defaults.Vrf)
+	assert.Equal(t, "VRF-A", policy.Config.Defaults.Vrf)
 	assert.Empty(t, policy.Config.CustomFields)
 	assert.Empty(t, policy.Config.TimestampPrecision)
 	assert.Equal(t, config.PrecisionDay, policy.Config.ResolvedTimestampPrecision())
@@ -50,7 +50,7 @@ func TestParsePolicyWithCustomFields(t *testing.T) {
 	var policies config.Policies
 	require.NoError(t, yaml.Unmarshal([]byte(`
 policies:
-  lab_scan:
+  subnet_scan:
     config:
       timestamp_precision: hour
       custom_fields:
@@ -60,7 +60,7 @@ policies:
       targets: [192.0.2.0/24]
 `), &policies))
 
-	cfg := policies.Policies["lab_scan"].Config
+	cfg := policies.Policies["subnet_scan"].Config
 	assert.Equal(t, "network_discovery", cfg.CustomFields["discovery_source"])
 	assert.Equal(t, 30, cfg.CustomFields["discovery_retention_days"])
 	assert.Equal(t, config.PrecisionHour, cfg.ResolvedTimestampPrecision())
@@ -108,8 +108,8 @@ func TestResolveCustomFieldsTokens(t *testing.T) {
 	resolved, err := config.ResolveCustomFields(raw, testTokens())
 	require.NoError(t, err)
 
-	assert.Equal(t, "lab-agent-01", resolved["discovery_agent"])
-	assert.Equal(t, "lab_scan", resolved["discovery_policy"])
+	assert.Equal(t, "agent-01", resolved["discovery_agent"])
+	assert.Equal(t, "subnet_scan", resolved["discovery_policy"])
 	assert.Equal(t, "network_discovery", resolved["discovery_source"])
 	// The scan timestamp resolves to a time, not a string, so it reaches a
 	// NetBox datetime field rather than a text one.
@@ -120,9 +120,9 @@ func TestResolveCustomFieldsTokens(t *testing.T) {
 // applies to its flags. A token inside a longer string is literal text.
 func TestResolveCustomFieldsLeavesEmbeddedTokensAlone(t *testing.T) {
 	resolved, err := config.ResolveCustomFields(
-		map[string]any{"discovery_agent": "lab-${AGENT_NAME}"}, testTokens())
+		map[string]any{"discovery_agent": "site-${AGENT_NAME}"}, testTokens())
 	require.NoError(t, err)
-	assert.Equal(t, "lab-${AGENT_NAME}", resolved["discovery_agent"])
+	assert.Equal(t, "site-${AGENT_NAME}", resolved["discovery_agent"])
 }
 
 func TestResolveCustomFieldsEnvVars(t *testing.T) {

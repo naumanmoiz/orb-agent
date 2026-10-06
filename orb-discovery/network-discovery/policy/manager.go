@@ -80,7 +80,7 @@ func (m *Manager) StartPolicy(name string, policy config.Policy) error {
 	}
 	config.WarnSubnetMapCoverage(policy.Scope.SubnetMap, policy.Scope.Targets, m.logger)
 
-	// A prefix with no VRF is matched globally by its CIDR, so two labs sharing
+	// A prefix with no VRF is matched globally by its CIDR, so two sites sharing
 	// address space would collapse onto one NetBox prefix. The VRF is what keeps
 	// them apart, and these VRFs are prebuilt, so a missing one is a config error.
 	// An entry naming its own vrf is covered; only the ones left with none are
@@ -95,7 +95,7 @@ func (m *Manager) StartPolicy(name string, policy config.Policy) error {
 		}
 		if len(unscoped) > 0 {
 			m.logger.Warn("subnet_map entries have no VRF and defaults.vrf is unset; their prefixes will be "+
-				"matched globally by CIDR and overlapping labs will collide on one NetBox prefix",
+				"matched globally by CIDR and overlapping sites will collide on one NetBox prefix",
 				"prefixes", unscoped, "policy", name)
 		}
 	}

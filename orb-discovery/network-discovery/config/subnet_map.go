@@ -54,7 +54,7 @@ type SubnetMapEntry struct {
 
 	// network is the parsed, mask-normalized form of Prefix, filled in by
 	// ValidateSubnetMap. Entries are matched and emitted through it so a
-	// host-bearing CIDR such as 10.1.2.5/24 becomes the 10.1.2.0/24 network
+	// host-bearing CIDR such as 192.0.2.5/24 becomes the 192.0.2.0/24 network
 	// NetBox expects.
 	network *net.IPNet `yaml:"-"`
 }

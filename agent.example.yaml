@@ -2,8 +2,8 @@
 #
 # Replace before running:
 #   <DIODE_HOST>   your Diode server address
-#   LAB-AUS-01     your real tenant / VRF identifier
-#   lab-agent-01   a name identifying this agent, used by ${AGENT_NAME}
+#   VRF-A     your real tenant / VRF identifier
+#   agent-01   a name identifying this agent, used by ${AGENT_NAME}
 #
 # Secrets come from the environment, never from this file:
 #   export DIODE_CLIENT_ID=... DIODE_CLIENT_SECRET=...
@@ -20,7 +20,7 @@ orb:
         target: grpc://<DIODE_HOST>:8080/diode
         client_id: ${DIODE_CLIENT_ID}
         client_secret: ${DIODE_CLIENT_SECRET}
-        agent_name: lab-agent-01
+        agent_name: agent-01
         # Uncomment both to write JSON locally instead of ingesting. Remove them
         # (do not set dry_run: false and leave the dir) to go live.
         # dry_run: true
@@ -28,7 +28,7 @@ orb:
     network_discovery: {}
   policies:
     network_discovery:
-      lab_scan:
+      subnet_scan:
         config:
           schedule: "0 */4 * * *"
           timeout: 10
@@ -39,27 +39,27 @@ orb:
             # tenant are both null, so a name that does not exist is created as
             # an empty VRF rather than failing. Verify with the bootstrap script
             # before deploying.
-            vrf: LAB-AUS-01
+            vrf: VRF-A
             # Set these ONLY to mirror what the prebuilt VRF already has. The
             # Diode NetBox plugin picks its matcher from the fields present, so
             # a name-only reference only ever finds a VRF with no rd and no
             # tenant; against one that has either, Diode creates a duplicate.
             # The bootstrap script reads the real VRF and prints what to set.
             # rd: "65000:9"
-            # vrf_tenant: "LAB-AUS-01"
+            # vrf_tenant: "Tenant A"
             # Set ONLY if the referenced tenants belong to a tenant group.
             # NetBox makes Tenant unique on (group, name) with
             # nulls_distinct=False, so the plugin reads an absent group as
             # "group IS NULL" and a group-less reference cannot find a grouped
             # tenant. Diode then creates a duplicate outside the group.
-            # tenant_group: "Labs"
-            tenant: LAB-AUS-01
+            # tenant_group: "Group A"
+            tenant: Tenant A
             description: "Discovered by orb network_discovery"
             tags: [orb, network-discovery]
             # NEW: defaults for the prefixes declared in scope.subnet_map.
             prefix:
               status: active
-              role: lab-data
+              role: data
           # NEW: applied to every IP address this policy emits. Keys are NetBox
           # custom field names (snake_case, the name and not the label) and the
           # definitions must already exist on ipam.ipaddress.
@@ -101,21 +101,21 @@ orb:
           subnet_map:
             - prefix: 192.0.2.0/24
               status: container
-              role: lab-aggregate
-              description: "Lab aggregate"
+              role: aggregate
+              description: "Aggregate"
             - prefix: 192.0.2.0/25
-              role: lab-servers
+              role: servers
               custom_fields:
-                lab_id: "312"
+                segment_id: "42"
             - prefix: 192.0.2.128/26
-              role: lab-gpu
+              role: compute
               custom_fields:
-                lab_id: "312"
+                segment_id: "42"
             # A subnet belonging to a different prebuilt VRF and tenant. Both
             # must already exist; verify with the bootstrap script, which lists
             # every prefix it would create and every VRF it cannot match.
             # - prefix: 198.51.100.0/24
-            #   vrf: CORP-AUS
-            #   vrf_tenant: "CORP"    # only if the prebuilt CORP-AUS VRF has one
-            #   tenant: "CORP"
-            #   role: corp-access
+            #   vrf: VRF-B
+            #   vrf_tenant: "Tenant B"    # only if the prebuilt VRF-B VRF has one
+            #   tenant: "Tenant B"
+            #   role: access

@@ -46,7 +46,7 @@ cd orb-discovery/network-discovery && GOWORK=off make build && cd ../..
 
 docker run --rm --net=host -u root \
   -v $(pwd)/orb-discovery/network-discovery/build/network-discovery:/opt/orb/files/network-discovery:ro \
-  -v /opt/orb-agent:/opt/orb \
+  -v /path/to/orb-config:/opt/orb \
   netboxlabs/orb-agent:latest run -c /opt/orb/agent.yaml
 ```
 
@@ -105,15 +105,15 @@ of the image.
 
 ## 3. Write the config
 
-Put `agent.yaml` in a directory you will mount, e.g. `/opt/orb-agent`. A full
+Put `agent.yaml` in a directory you will mount, e.g. `/path/to/orb-config`. A full
 sample is at [`agent.example.yaml`](../agent.example.yaml) and in
 [section 8](#8-sample-agentyaml).
 
 | Placeholder | Meaning |
 |---|---|
 | `<DIODE_HOST>` | Your Diode server address |
-| `LAB-AUS-01` | Your real tenant / VRF identifier |
-| `lab-agent-01` | Identifies this agent; this is what `${AGENT_NAME}` becomes |
+| `VRF-A` | Your real tenant / VRF identifier |
+| `agent-01` | Identifies this agent; this is what `${AGENT_NAME}` becomes |
 | `192.0.2.0/24` | What nmap actually scans |
 
 Credentials come from the environment, never the file.
@@ -131,7 +131,7 @@ pip install requests PyYAML
 export NETBOX_URL=https://netbox.example.net NETBOX_TOKEN=...
 
 python3 tools/netbox-bootstrap/bootstrap_custom_fields.py \
-  --config /opt/orb-agent/agent.yaml --dry-run
+  --config /path/to/orb-config/agent.yaml --dry-run
 ```
 
 Read it as a checklist:
@@ -143,8 +143,8 @@ Read it as a checklist:
 | `~ update` | Exists but not attached to `ipam.ipaddress` |
 | `! WRONG` | Exists with a type that does not match what the policy will send |
 
-The expected type comes from the policy value, not the field name, so `lab_id: 312`
-expects an integer field and `lab_id: "312"` expects a text one. The message names
+The expected type comes from the policy value, not the field name, so `segment_id: 42`
+expects an integer field and `segment_id: "42"` expects a text one. The message names
 both sides and which YAML form matches, because either one can be the wrong one.
 
 **If you created the fields by hand, run this anyway.** The common mistake is
@@ -188,9 +188,9 @@ dry_run_output_dir: /opt/orb/out
 ```
 
 ```bash
-mkdir -p /opt/orb-agent/out
+mkdir -p /path/to/orb-config/out
 docker run --rm --net=host -u root \
-  -v /opt/orb-agent:/opt/orb \
+  -v /path/to/orb-config:/opt/orb \
   orb-agent:cf-$SHA run -c /opt/orb/agent.yaml
 ```
 
@@ -200,7 +200,7 @@ one scan, Ctrl-C, then inspect:
 ```bash
 python3 - <<'EOF'
 import json, glob
-path = sorted(glob.glob('/opt/orb-agent/out/*.json'))[-1]
+path = sorted(glob.glob('/path/to/orb-config/out/*.json'))[-1]
 doc = json.load(open(path))
 print(path, len(doc['entities']), 'entities')
 for e in doc['entities']:
@@ -239,7 +239,7 @@ export DIODE_CLIENT_ID=... DIODE_CLIENT_SECRET=...
 docker run -d --name orb-agent --restart unless-stopped \
   --net=host -u root \
   -e DIODE_CLIENT_ID -e DIODE_CLIENT_SECRET \
-  -v /opt/orb-agent:/opt/orb \
+  -v /path/to/orb-config:/opt/orb \
   orb-agent:cf-$SHA run -c /opt/orb/agent.yaml
 
 docker logs -f orb-agent
@@ -265,7 +265,7 @@ services:
       DIODE_CLIENT_ID: ${DIODE_CLIENT_ID}
       DIODE_CLIENT_SECRET: ${DIODE_CLIENT_SECRET}
     volumes:
-      - /opt/orb-agent:/opt/orb
+      - /path/to/orb-config:/opt/orb
     command: ["run", "-c", "/opt/orb/agent.yaml"]
 ```
 
@@ -317,20 +317,20 @@ orb:
         target: grpc://<DIODE_HOST>:8080/diode
         client_id: ${DIODE_CLIENT_ID}
         client_secret: ${DIODE_CLIENT_SECRET}
-        agent_name: lab-agent-01
+        agent_name: agent-01
         # Uncomment both for a dry run. REMOVE them to go live.
         # dry_run: true
         # dry_run_output_dir: /opt/orb/out
     network_discovery: {}
   policies:
     network_discovery:
-      lab_scan:
+      subnet_scan:
         config:
           schedule: "0 */4 * * *"
           timeout: 10
           defaults:
-            vrf: LAB-AUS-01
-            tenant: LAB-AUS-01
+            vrf: VRF-A
+            tenant: Tenant A
             description: "Discovered by orb network_discovery"
             tags: [orb, network-discovery]
           custom_fields:
@@ -344,7 +344,7 @@ orb:
             - 192.0.2.0/24
 ```
 
-### Many labs on one agent
+### Many sites on one agent
 
 One agent runs many policies, each with its own VRF. Overlapping subnets stay
 separate because each policy is its own runner and prefixes are matched by
@@ -353,9 +353,9 @@ separate because each policy is its own runner and prefixes are matched by
 ```yaml
   policies:
     network_discovery:
-      lab_a_scan:
+      vrf_a_scan:
         config:
-          defaults: {vrf: LAB-A, tenant: LAB-A}
+          defaults: {vrf: VRF-A, tenant: VRF-A}
           custom_fields:
             discovery_agent: "${AGENT_NAME}"
             discovery_policy: "${POLICY_NAME}"
@@ -364,9 +364,9 @@ separate because each policy is its own runner and prefixes are matched by
           timestamp_precision: day
         scope:
           targets: ["192.0.2.0/24"]
-      lab_b_scan:
+      vrf_b_scan:
         config:
-          defaults: {vrf: LAB-B, tenant: LAB-B}
+          defaults: {vrf: VRF-C, tenant: VRF-C}
           custom_fields:
             discovery_agent: "${AGENT_NAME}"
             discovery_policy: "${POLICY_NAME}"
@@ -378,7 +378,7 @@ separate because each policy is its own runner and prefixes are matched by
 ```
 
 `${POLICY_NAME}` distinguishes them in NetBox, so one agent's records stay
-attributable per lab.
+attributable per site.
 
 ## 9. Rollback
 
@@ -387,7 +387,7 @@ Nothing in NetBox needs undoing; this change only adds field values.
 ```bash
 docker stop orb-agent && docker rm orb-agent
 docker run -d --name orb-agent --restart unless-stopped \
-  --net=host -u root -v /opt/orb-agent:/opt/orb \
+  --net=host -u root -v /path/to/orb-config:/opt/orb \
   netboxlabs/orb-agent:latest run -c /opt/orb/agent.yaml
 ```
 

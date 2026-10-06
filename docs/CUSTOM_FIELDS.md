@@ -15,11 +15,11 @@ prefixes as well as to addresses.
 
 ```yaml
 policies:
-  lab_scan:
+  subnet_scan:
     config:
       defaults:
-        vrf: LAB-AUS-01
-        tenant: LAB-AUS-01
+        vrf: VRF-A
+        tenant: Tenant A
       custom_fields:
         discovery_agent: "${AGENT_NAME}"
         discovery_policy: "${POLICY_NAME}"
@@ -48,7 +48,7 @@ Value types map from YAML:
 | mapping or sequence | json |
 | null | dropped, not sent |
 
-A value that is **exactly** `${NAME}` is substituted. `"lab-${NAME}"` is left as
+A value that is **exactly** `${NAME}` is substituted. `"site-${NAME}"` is left as
 literal text, matching the whole-value convention the backend already uses for
 its flags.
 
@@ -110,8 +110,8 @@ The expected type is inferred from the **policy value**, the same way the backen
 infers it, so the check catches both directions:
 
 ```yaml
-lab_id: 312      # integer, matches an integer custom field
-lab_id: "312"    # text, matches a text, longtext, url or select field
+segment_id: 42      # integer, matches an integer custom field
+segment_id: "42"    # text, matches a text, longtext, url or select field
 ```
 
 A NetBox **select** field holds a string, so its value must be quoted. The
@@ -122,7 +122,7 @@ value is written rather than rejected and then reads as invalid in the UI.
 
 A field attached to more models than `ipam.ipaddress` is fine. The script only
 requires that `ipam.ipaddress` is among them, and an update adds it without
-removing the others, so a shared field such as `lab_id` used on devices and
+removing the others, so a shared field such as `segment_id` used on devices and
 prefixes keeps working.
 
 A type mismatch is reported, never corrected: retyping a populated custom field
@@ -175,10 +175,10 @@ An emitted address should look like:
 ```json
 {
   "address": "192.0.2.200/24",
-  "vrf": {"name": "LAB-AUS-01"},
+  "vrf": {"name": "VRF-A"},
   "custom_fields": {
-    "discovery_agent":     {"text": "lab-agent-01"},
-    "discovery_policy":    {"text": "lab_scan"},
+    "discovery_agent":     {"text": "agent-01"},
+    "discovery_policy":    {"text": "subnet_scan"},
     "discovery_source":    {"text": "network_discovery"},
     "discovery_last_seen": {"datetime": "2026-09-15T00:00:00Z"}
   }

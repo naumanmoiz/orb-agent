@@ -101,7 +101,7 @@ func (b *prefixBuilder) entities() []diode.Entity { return b.order }
 // entirely, so a name-only reference can only ever find a VRF that has neither
 // an rd nor a tenant. Point it at a VRF that has either and nothing matches:
 // Diode then creates a second, empty VRF of the same name and reconciles into
-// it, which reads as success while splitting the lab's address space in two.
+// it, which reads as success while splitting the network's address space in two.
 //
 // Hence vrf_tenant, which is deliberately separate from defaults.tenant. That
 // one describes the address and the prefix; this one exists only to make the
