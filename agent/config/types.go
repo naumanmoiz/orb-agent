@@ -67,11 +67,102 @@ type FleetManager struct {
 	OTLPBridgeBindHost       string `yaml:"otlp_bridge_bind_host,omitempty"`       // Host both bridge listeners bind to (default: localhost; set 0.0.0.0 or :: to expose them)
 }
 
-// Sources represents the configuration for manager sources, including cloud, local and git.
+// NetBoxManager represents the NetBox ConfigManager configuration. It reads
+// IPAM prefixes from NetBox and generates network_discovery (and optionally
+// snmp_discovery) policies from them. See docs/NETBOX_PREFIX_SYNC.md.
+type NetBoxManager struct {
+	// URL is the NetBox base URL, e.g. https://netbox.example.com. ${VAR} is
+	// resolved from the environment.
+	URL string `yaml:"url"`
+	// Token is the API token: "Token <t>", "Bearer <t>", or a bare token
+	// (nbt_ v2 tokens are sent as Bearer, others as Token). ${VAR} is resolved
+	// from the environment.
+	Token         string `yaml:"token"`
+	SkipTLSVerify bool   `yaml:"skip_tls_verify"`
+	// Schedule is the cron expression on which NetBox is re-read. Unset means
+	// the policies are generated once at startup.
+	Schedule *string `yaml:"schedule,omitempty"`
+	// Timeout is the per-request HTTP timeout in seconds (default 30).
+	Timeout *int `yaml:"timeout,omitempty"`
+	// Retries is how many times a failed request is retried (default 3).
+	Retries *int `yaml:"retries,omitempty"`
+	// PageSize is the page size used against the NetBox API (default 1000).
+	PageSize int `yaml:"page_size,omitempty"`
+	// Statuses are the prefix statuses eligible for scanning (default
+	// [container, active]). Prefixes of every status are still fetched, since
+	// all of them count when computing what a parent's children cover.
+	Statuses []string `yaml:"statuses,omitempty"`
+	// Filters are extra query parameters passed to /api/ipam/prefixes/.
+	Filters map[string]any `yaml:"filters,omitempty"`
+	// GeneratedConfigPath, when set, receives the rendered policies on every
+	// refresh, before they are applied.
+	GeneratedConfigPath string `yaml:"generated_config_path,omitempty"`
+	// AllowEmpty lets a refresh that finds no prefixes at all remove every
+	// generated policy. Off by default, so a NetBox outage or a wrong filter
+	// cannot wipe the running set.
+	AllowEmpty bool `yaml:"allow_empty,omitempty"`
+
+	NetworkDiscovery NetBoxNetworkDiscovery `yaml:"network_discovery"`
+	SNMPDiscovery    NetBoxSNMPDiscovery    `yaml:"snmp_discovery"`
+}
+
+// NetBoxNetworkDiscovery configures the network_discovery policies the NetBox
+// ConfigManager generates.
+type NetBoxNetworkDiscovery struct {
+	Enabled  bool   `yaml:"enabled"`
+	Schedule string `yaml:"schedule,omitempty"`
+	// StragglerDelayMinutes shifts Schedule to produce the straggler schedule.
+	StragglerDelayMinutes *int `yaml:"straggler_delay_minutes,omitempty"`
+	// StragglerSchedule replaces the shifted schedule outright.
+	StragglerSchedule string `yaml:"straggler_schedule,omitempty"`
+	// StaggerMinutes spreads the generated policies' start times evenly over
+	// this many minutes so they do not all fire at once.
+	StaggerMinutes int `yaml:"stagger_minutes,omitempty"`
+	// Timeout is the policy timeout in minutes.
+	Timeout             int  `yaml:"timeout,omitempty"`
+	MaxTargetsPerPolicy int  `yaml:"max_targets_per_policy,omitempty"`
+	MaxHostsPerPolicy   int  `yaml:"max_hosts_per_policy,omitempty"`
+	MaxBlockPrefixLenV4 *int `yaml:"max_block_prefix_len_v4,omitempty"`
+	MaxBlockPrefixLenV6 *int `yaml:"max_block_prefix_len_v6,omitempty"`
+	// Config is merged into every generated policy's config block.
+	Config map[string]any `yaml:"config,omitempty"`
+	// Scope is merged into every generated policy's scope block.
+	Scope     map[string]any  `yaml:"scope,omitempty"`
+	Straggler NetBoxStraggler `yaml:"straggler"`
+}
+
+// NetBoxStraggler configures the second pass, which scans the part of every
+// parent prefix that none of its children covers.
+type NetBoxStraggler struct {
+	Enabled             *bool          `yaml:"enabled,omitempty"`
+	MaxBlockPrefixLenV4 *int           `yaml:"max_block_prefix_len_v4,omitempty"`
+	MaxBlockPrefixLenV6 *int           `yaml:"max_block_prefix_len_v6,omitempty"`
+	MaxHostsPerParent   int            `yaml:"max_hosts_per_parent,omitempty"`
+	PingOnly            *bool          `yaml:"ping_only,omitempty"`
+	MaxTargetsPerPolicy int            `yaml:"max_targets_per_policy,omitempty"`
+	MaxHostsPerPolicy   int            `yaml:"max_hosts_per_policy,omitempty"`
+	Scope               map[string]any `yaml:"scope,omitempty"`
+}
+
+// NetBoxSNMPDiscovery configures the snmp_discovery policies the NetBox
+// ConfigManager generates.
+type NetBoxSNMPDiscovery struct {
+	Enabled             bool           `yaml:"enabled"`
+	Schedule            string         `yaml:"schedule,omitempty"`
+	StaggerMinutes      int            `yaml:"stagger_minutes,omitempty"`
+	IncludeStragglers   bool           `yaml:"include_stragglers,omitempty"`
+	MaxTargetsPerPolicy int            `yaml:"max_targets_per_policy,omitempty"`
+	MaxHostsPerPolicy   int            `yaml:"max_hosts_per_policy,omitempty"`
+	Authentication      map[string]any `yaml:"authentication,omitempty"`
+	Config              map[string]any `yaml:"config,omitempty"`
+}
+
+// Sources represents the configuration for manager sources, including cloud, local, git and netbox.
 type Sources struct {
-	Local LocalManager `yaml:"local"`
-	Git   GitManager   `yaml:"git"`
-	Fleet FleetManager `yaml:"fleet"`
+	Local  LocalManager  `yaml:"local"`
+	Git    GitManager    `yaml:"git"`
+	Fleet  FleetManager  `yaml:"fleet"`
+	NetBox NetBoxManager `yaml:"netbox"`
 }
 
 // ManagerConfig represents the configuration for the Config Manager
