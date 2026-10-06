@@ -843,6 +843,9 @@ type InterfaceMapper struct {
 	patternMatcher   *PatternMatcher
 	userPatternCount int
 	nameSource       string
+	// skipDescription leaves Interface.description off the entity, so a
+	// hand-written NetBox description is not overwritten by ifAlias.
+	skipDescription bool
 }
 
 // resolveInterfaceName selects Interface.Name from the two SNMP sources
@@ -983,6 +986,9 @@ func (m *InterfaceMapper) Map(values map[ObjectIDIndex]*ObjectIDValue, mappingEn
 					// Capture ifName (ifXTable); see resolveInterfaceName.
 					ifNameRaw = trimSNMPString(value.Value)
 				case "description":
+					if m.skipDescription {
+						continue
+					}
 					description := trimSNMPString(value.Value)
 					if description != "" {
 						if len(description) > 200 {
@@ -1189,6 +1195,9 @@ type DeviceMapper struct {
 	manufacturers data.ManufacturerRetriever
 	deviceLookup  data.DeviceRetriever
 	logger        *slog.Logger
+	// skipDescription leaves Device.description off the entity, so a
+	// hand-written NetBox description is not overwritten by sysDescr.
+	skipDescription bool
 }
 
 // applyDefaults applies default values to a device entity
@@ -1329,6 +1338,9 @@ func (m *DeviceMapper) Map(values map[ObjectIDIndex]*ObjectIDValue, mappingEntry
 						fieldFound = true
 					}
 				case "description":
+					if m.skipDescription {
+						continue
+					}
 					description := trimSNMPString(value.Value)
 					if description != "" {
 						if len(description) > 200 {

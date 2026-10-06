@@ -636,6 +636,29 @@ type Options struct {
 	// once cannot later be cleared by discovery, and while this is on any
 	// manual correction is overwritten on the next poll.
 	EmitPrefixVlan *string `yaml:"emit_prefix_vlan,omitempty"`
+
+	// Tri-state pointer; unset defaults to TRUE — Device.description is
+	// filled from sysDescr, matching legacy behaviour. Set false to leave the
+	// description off the emitted device so a hand-written NetBox description
+	// is never overwritten by the polled one.
+	DeviceDescriptionFromSysDescr *bool `yaml:"device_description_from_sysdescr,omitempty"`
+
+	// Tri-state pointer; unset defaults to TRUE — Interface.description is
+	// filled from the mapped description column (ifAlias), matching legacy
+	// behaviour. Set false to leave interface descriptions untouched.
+	InterfaceDescriptionFromIfAlias *bool `yaml:"interface_description_from_ifalias,omitempty"`
+}
+
+// DeviceDescriptionEnabled returns the effective
+// device_description_from_sysdescr toggle, defaulting to TRUE.
+func (o *Options) DeviceDescriptionEnabled() bool {
+	return o == nil || o.DeviceDescriptionFromSysDescr == nil || *o.DeviceDescriptionFromSysDescr
+}
+
+// InterfaceDescriptionEnabled returns the effective
+// interface_description_from_ifalias toggle, defaulting to TRUE.
+func (o *Options) InterfaceDescriptionEnabled() bool {
+	return o == nil || o.InterfaceDescriptionFromIfAlias == nil || *o.InterfaceDescriptionFromIfAlias
 }
 
 // PrefixEmissionEnabled returns the effective emit_prefixes toggle,

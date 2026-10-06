@@ -504,6 +504,7 @@ func NewConfig(mappings []config.MappingEntry, logger *slog.Logger, manufacturer
 	if err != nil {
 		return nil, fmt.Errorf("failed to create interface mapper: %w", err)
 	}
+	interfaceMapper.skipDescription = !options.InterfaceDescriptionEnabled()
 
 	vlanMapper := NewVlanMapper(logger, options)
 	entityMappers := map[string]orbToEntityMapper{
@@ -513,8 +514,9 @@ func NewConfig(mappings []config.MappingEntry, logger *slog.Logger, manufacturer
 		"interface": interfaceMapper,
 		"device": &DeviceMapper{
 			logger:        logger,
-			manufacturers: manufacturers,
-			deviceLookup:  deviceLookup,
+			manufacturers:   manufacturers,
+			deviceLookup:    deviceLookup,
+			skipDescription: !options.DeviceDescriptionEnabled(),
 		},
 		"vlan":                             vlanMapper,
 		"interface_vlan":                   vlanMapper,
