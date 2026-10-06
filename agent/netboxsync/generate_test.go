@@ -3,6 +3,7 @@ package netboxsync
 import (
 	"context"
 	"fmt"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sort"
@@ -158,7 +159,7 @@ func TestGenerateStragglerLimits(t *testing.T) {
 	cfg := baseConfig()
 	cfg.NetworkDiscovery.Straggler.MaxHostsPerParent = 200
 	big := pfx(1, 0, "198.51.100.0/24", "container") // whole /24 leftover: within /20, 256 hosts
-	huge := pfx(2, 0, "10.0.0.0/16", "container")    // /16 block is larger than /20: skipped
+	huge := pfx(2, 0, "2001:db8::/64", "container")  // a /64 block is larger than /116: skipped
 	multi := pfx(3, 0, "203.0.113.0/24", "active")
 	child := pfx(4, 0, "203.0.113.0/26", "active") // leftover: .64/26 and .128/25 = 192 hosts
 	grand := pfx(5, 0, "203.0.113.0/27", "active")
@@ -170,7 +171,7 @@ func TestGenerateStragglerLimits(t *testing.T) {
 	for _, sk := range res.Summary.Skipped {
 		reasons[sk.Block] = sk.Reason
 	}
-	assert.Contains(t, reasons["10.0.0.0/16"], "max_block_prefix_len")
+	assert.Contains(t, reasons["2001:db8::/64"], "max_block_prefix_len")
 	assert.Contains(t, reasons["198.51.100.0/24"], "max_hosts_per_parent", "256 hosts exceed the 200 cap")
 	// 192.0.2.0/24 minus a /30 leaves .4/30 .8/29 .16/28 .32/27 .64/26 (124
 	// addresses), and then .128/25 would take it past 200.
@@ -181,7 +182,7 @@ func TestGenerateStragglerLimits(t *testing.T) {
 	targets := targetsOf(t, res.Policies[NetworkDiscoveryBackend]["nb-nd-straggler-global-001"])
 	assert.Contains(t, targets, "203.0.113.128/25")
 	assert.Contains(t, targets, "203.0.113.32/27", "the child's leftover around the grandchild")
-	assert.NotContains(t, targets, "10.0.0.0/16")
+	assert.NotContains(t, targets, "2001:db8::/64")
 }
 
 func TestGenerateLeafSizeLimit(t *testing.T) {
@@ -196,16 +197,27 @@ func TestGenerateLeafSizeLimit(t *testing.T) {
 	assert.Contains(t, string(out), "# skipped 198.51.100.0/23 (prefix id 1")
 }
 
+// leafCIDR returns the i-th /120 inside the b-th /104 of 2001:db8::/96
+// (RFC 3849 documentation space).
+func leafCIDR(b, i int) string {
+	var a [16]byte
+	copy(a[:], netip.MustParseAddr("2001:db8::").AsSlice())
+	a[12] = byte(b)
+	a[13] = byte(i >> 8)
+	a[14] = byte(i)
+	return netip.PrefixFrom(netip.AddrFrom16(a), 120).String()
+}
+
 func manyLeaves(vrfID int, vrf string, n int, startID int) []*Prefix {
 	var out []*Prefix
 	for i := 0; i < n; i++ {
-		// 10.x.y.0/24 leaves inside one 10.0.0.0/8 container per VRF.
-		cidr := fmt.Sprintf("10.%d.%d.0/24", i/256, i%256)
+		// /120 leaves (256 addresses each) inside one /96 container per VRF.
+		cidr := leafCIDR(0, i)
 		p := pfx(startID+i, vrfID, cidr, "active")
 		p.VRF = vrf
 		out = append(out, p)
 	}
-	c := pfx(startID+n, vrfID, "10.0.0.0/8", "container")
+	c := pfx(startID+n, vrfID, "2001:db8::/96", "container")
 	c.VRF = vrf
 	return append(out, c)
 }
@@ -219,7 +231,7 @@ func TestGenerateBatchingLimits(t *testing.T) {
 	nd := res.Policies[NetworkDiscoveryBackend]
 	assert.Equal(t, []string{"nb-nd-vrf-a-001", "nb-nd-vrf-a-002", "nb-nd-vrf-a-003", "nb-nd-vrf-a-004"}, policyNames(nd),
 		"the host limit (2 x /24) is hit before the target limit")
-	assert.Equal(t, []string{"10.0.0.0/24", "10.0.1.0/24"}, targetsOf(t, nd["nb-nd-vrf-a-001"]))
+	assert.Equal(t, []string{leafCIDR(0, 0), leafCIDR(0, 1)}, targetsOf(t, nd["nb-nd-vrf-a-001"]))
 	assert.Len(t, entriesOf(t, nd["nb-nd-vrf-a-001"]), 2, "one subnet_map entry per prefix in the batch")
 
 	cfg.NetworkDiscovery.MaxHostsPerPolicy = 1 << 20
@@ -238,7 +250,7 @@ func TestGenerateNameStability(t *testing.T) {
 	build := func(extra bool) map[string]any {
 		ps := append(manyLeaves(10, "VRF-A", 25, 1), manyLeaves(20, "VRF-B", 25, 1000)...)
 		if extra {
-			p := pfx(5000, 20, "10.0.200.0/24", "active")
+			p := pfx(5000, 20, leafCIDR(0, 200), "active")
 			p.VRF = "VRF-B"
 			ps = append(ps, p)
 		}
@@ -377,18 +389,16 @@ func TestGeneratePerformance(t *testing.T) {
 			ps = append(ps, p)
 			id++
 		}
-		add("10.0.0.0/8", "container")
+		add("2001:db8::/96", "container")
 		for b := 0; b < 20; b++ {
-			add(fmt.Sprintf("10.%d.0.0/16", b), "container")
+			add(netip.MustParsePrefix(leafCIDR(b, 0)).Addr().String()+"/104", "container")
 			for c := 0; c < 24; c++ {
-				add(fmt.Sprintf("10.%d.%d.0/24", b, c), "active")
+				add(leafCIDR(b, c), "active")
 			}
 		}
 	}
 	require.GreaterOrEqual(t, len(ps), 5000)
 	cfg := baseConfig()
-	cfg.NetworkDiscovery.Straggler.MaxBlockPrefixLenV4 = intPtr(8)
-	cfg.NetworkDiscovery.Straggler.MaxHostsPerParent = 1 << 30
 	cfg.SNMPDiscovery.Enabled = true
 	s := mustSettings(t, cfg)
 
@@ -401,7 +411,9 @@ func TestGeneratePerformance(t *testing.T) {
 		len(ps), res.Summary.ScanPolicies, res.Summary.StragglerPolicies, res.Summary.SNMPPolicies, len(out), elapsed)
 	assert.Less(t, elapsed, 2*time.Second)
 	assert.Equal(t, 4800, res.Summary.ScanPrefixes)
-	assert.Equal(t, 20, res.Summary.ScanPolicies, "4800 /24 leaves at 256 hosts each, 256 per policy by hosts")
+	assert.Equal(t, 20, res.Summary.ScanPolicies, "4800 /120 leaves at 256 addresses each, 256 per policy by hosts")
+	assert.Less(t, res.Summary.ScanPolicies+res.Summary.StragglerPolicies+res.Summary.SNMPPolicies, 300,
+		"thousands of prefixes become a bounded number of policies")
 }
 
 func TestRenderAndWriteAtomic(t *testing.T) {
