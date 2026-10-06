@@ -25,11 +25,10 @@ hyphen, so a name nmap printed as `abc1234-vendor*model*unit.example.net`
 arrives as `abc1234-vendor-model-unit.example.net`. A name with no form
 NetBox accepts, one with an empty label, longer than 255 characters or left
 with no letter or digit, is left off; the address is still sent, and a
-`dns_name` NetBox already holds for it stays as it is. In either case the
-name as nmap gave it is kept under `hostnames` in the IP's comments, unless
-the policy sets `defaults.comments`, which the backend does not add to. A
-name that needed no change is not recorded, so this changes nothing in the
-comments of an IP whose name was already acceptable. Each run logs how many
+`dns_name` NetBox already holds for it stays as it is. When the policy opts
+in with `scan_details_in_comments: true` (and sets no `defaults.comments`),
+the name as nmap gave it is kept under `hostnames` in the IP's comments. A
+name that needed no change is not recorded there. Each run logs how many
 names it replaced or left off. A name that was already accepted with an
 asterisk, which NetBox allows as a leading wildcard label, changes on the
 next run, since nmap's asterisk never marks a wildcard.
@@ -68,6 +67,7 @@ Config defines data for the whole scope and is optional overall.
 | timeout | int | no | Timeout in minutes for the nmap scan operation. The default value is 5 minutes.
 | custom_fields | map | no | NetBox custom field values applied to every emitted IP address. The definitions must already exist in NetBox on `ipam.ipaddress`. See [docs/CUSTOM_FIELDS.md](../CUSTOM_FIELDS.md). |
 | subnet_map (scope) | list | no | Subnets to create as NetBox prefixes. Each discovered address takes the mask of the most specific entry containing it, and is placed in that entry's VRF and tenant, so one policy can cover several VRFs. See [docs/PREFIXES.md](../PREFIXES.md). |
+| scan_details_in_comments | bool | no | Default `false`. When `true` and `defaults.comments` is empty, each IP's comments are set to a JSON document with its hostnames and ports, which was the behaviour before this option existed. Comments are often hand-written, so the scan leaves them alone by default; use the `${SCAN_DETAILS}` custom field token to keep the same document in a json custom field instead. |
 | timestamp_precision | str | no | How much of `${SCAN_TIMESTAMP}` is kept: `nanosecond`, `second`, `minute`, `hour` or `day` (default). Coarser precision lets an unchanged address reconcile to a no-op instead of being rewritten every scan. |
 
 #### Defaults
@@ -77,6 +77,7 @@ Current supported defaults:
 |:-----:|:----:|:-------------:|
 | vrf | str | VRF name to assign to discovered IP addresses |
 | rd | str | Route Distinguisher (RD) for the VRF (only used when `vrf` is set). Optional — when omitted the VRF is emitted without an RD so NetBox can match an existing VRF whose `rd` is null. |
+| vrf_tenant_group | str | Group of `vrf_tenant`, when it differs from `tenant_group`. |
 | vrf_tenant | str | Tenant on the **VRF reference**, set only to mirror a prebuilt VRF that has one. Distinct from `tenant`: it exists to make the VRF match, not to describe the address. See [docs/PREFIXES.md](../PREFIXES.md). |
 | tenant_group | str | Group the referenced tenants belong to. NetBox makes Tenant unique on `(group, name)`, so a group-less reference cannot find a grouped tenant and Diode creates a duplicate outside the group. |
 | tenant | str | Tenant name to assign to discovered IP addresses |

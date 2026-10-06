@@ -361,3 +361,15 @@ under the parent, and the child's IP Addresses tab should list the address.
   from the changeset rather than sent as null.
 - **A typo'd CIDR creates a real, empty prefix.** The coverage warning is the
   only signal, and it fires only when the entry overlaps nothing at all.
+
+## Placing addresses inside prefixes that already exist
+
+An entry with `emit_prefix: false` is not sent as a Prefix. It still gives the
+addresses inside it the entry's mask, VRF and tenant, and `address_tags` adds
+tags to those addresses (the entry's `tags` describe the prefix only). This is
+how the [NetBox prefix sync](NETBOX_PREFIX_SYNC.md) places discovered addresses
+in prefixes it read from NetBox without re-asserting the prefixes themselves.
+
+`vrf_tenant_group` names the group of `vrf_tenant` when the VRF's tenant sits in
+a different group from the prefix's tenant; unset, the entry's `tenant_group`
+is used for both.

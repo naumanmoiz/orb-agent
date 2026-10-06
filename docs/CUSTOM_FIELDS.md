@@ -57,6 +57,7 @@ its flags.
 | `${AGENT_NAME}` | `common.diode.agent_name`, which reaches the backend as `--diode-app-name-prefix`. An empty agent name is an error, not a blank field. |
 | `${POLICY_NAME}` | The policy key |
 | `${SCAN_TIMESTAMP}` | The start of the scan run, truncated to `timestamp_precision`, as a **datetime** rather than a string. Identical across every address in one run. |
+| `${SCAN_DETAILS}` | Per address: a JSON document with the hostnames, open ports and port-state counts nmap reported. For a **json** custom field. See below. |
 | any other `${VAR}` | The environment variable. Unset or empty is an error. |
 
 A value that cannot be resolved is logged and the whole block is skipped for that
@@ -231,3 +232,18 @@ The `error` column carries the NetBox plugin's response and names the field.
 - **Discovery never deletes.** An address that stops responding keeps its last
   `discovery_last_seen`; use that field to find stale records, and note that
   `timestamp_precision` bounds how precise it can be.
+
+## Per-address scan details
+
+`${SCAN_DETAILS}` resolves, for each address, to a JSON document with the
+reverse hostnames, open ports and port-state counts nmap reported. Point it at
+a NetBox custom field of type json:
+
+```yaml
+custom_fields:
+  discovery_scan_details: "${SCAN_DETAILS}"
+```
+
+This replaces the old default of writing the same document into the
+address's comments, which network_discovery no longer does unless
+`config.scan_details_in_comments: true` is set. Prefixes never carry it.

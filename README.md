@@ -26,9 +26,10 @@ orb:
   ...
 ```
 
-Currently, only the `local` and `git` sources are supported for config manager.
+The `local`, `git` and `netbox` sources are supported for config manager.
 - [Local](./docs/configs/local.md)
 - [Git](./docs/configs/git.md)
+- [NetBox prefix sync](./docs/NETBOX_PREFIX_SYNC.md): generate discovery policies from NetBox IPAM prefixes
 
 ### Secrets Manager
 The `secrets_manager` section specifies how Orb agent should retrieve and inject secrets into policies. The secrets manager can reference external secret stores like HashiCorp Vault, Doppler, CyberArk, Delinea Secret Server, or Delinea DevOps Secrets Vault to retrieve sensitive information such as credentials without hardcoding them in configuration files.

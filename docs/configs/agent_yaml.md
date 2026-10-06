@@ -22,7 +22,7 @@ orb:
 |-----|----------|-------------|
 | `version` | No | Config schema version (informational) |
 | `orb.labels` | No | Key/value pairs that identify this agent instance. Used by the Git config manager to match `selector.yaml` entries |
-| `orb.config_manager` | Yes | Defines where policies come from (`local` or `git`) |
+| `orb.config_manager` | Yes | Defines where policies come from (`local`, `git` or `netbox`) |
 | `orb.backends` | Yes | Declares which discovery backends to run and their common settings |
 | `orb.policies` | Only with `local` | Inline policy definitions. Ignored when `config_manager.active` is `git` |
 | `orb.secrets_manager` | No | Configures Vault to resolve `${vault://...}` references at runtime |
@@ -58,7 +58,7 @@ orb:
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `active` | string | Yes | Which source to use: `local` or `git` |
+| `active` | string | Yes | Which source to use: `local`, `git` or `netbox` |
 
 ### `local`
 
@@ -68,6 +68,23 @@ Policies are read directly from `orb.policies` in the same config file. No addit
 orb:
   config_manager:
     active: local
+```
+
+### `netbox`
+
+Policies are generated from NetBox IPAM prefixes. See [NetBox prefix sync](../NETBOX_PREFIX_SYNC.md).
+
+```yaml
+orb:
+  config_manager:
+    active: netbox
+    sources:
+      netbox:
+        url: ${NETBOX_URL}
+        token: ${NETBOX_TOKEN}
+        schedule: "*/30 * * * *"
+        network_discovery:
+          enabled: true
 ```
 
 ### `git`
