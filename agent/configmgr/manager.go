@@ -25,6 +25,8 @@ func New(logger *slog.Logger, pMgr policymgr.PolicyManager, active string, backe
 		return &localConfigManager{logger: logger, pMgr: pMgr} // fm unused: local/git mode has no fleet bundle delivery
 	case "git":
 		return &gitConfigManager{logger: logger, pMgr: pMgr}
+	case "netbox":
+		return newNetBoxConfigManager(logger, pMgr)
 	case "fleet":
 		return newFleetConfigManager(logger, pMgr, backendState, fm)
 	default:
