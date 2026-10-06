@@ -220,8 +220,30 @@ func (s Summary) Log(logger *slog.Logger) {
 	for _, w := range s.Warnings {
 		logger.Warn(w)
 	}
+	// One warning per reason with a few examples, so a large IPv6 deployment
+	// does not log thousands of lines every refresh; the full list is debug.
+	byReason := map[string][]Skip{}
+	var reasons []string
 	for _, sk := range s.Skipped {
-		logger.Warn("netbox prefix sync skipped a block", "prefix_id", sk.PrefixID, "block", sk.Block, "vrf", sk.VRF, "reason", sk.Reason)
+		if _, seen := byReason[sk.Reason]; !seen {
+			reasons = append(reasons, sk.Reason)
+		}
+		byReason[sk.Reason] = append(byReason[sk.Reason], sk)
+	}
+	for _, reason := range reasons {
+		skips := byReason[reason]
+		var examples []string
+		for i, sk := range skips {
+			if i == 5 {
+				break
+			}
+			examples = append(examples, fmt.Sprintf("%s (prefix id %d, vrf %q)", sk.Block, sk.PrefixID, sk.VRF))
+		}
+		logger.Warn("netbox prefix sync skipped blocks", "reason", reason, "count", len(skips), "examples", examples)
+		for _, sk := range skips {
+			logger.Debug("netbox prefix sync skipped a block", "prefix_id", sk.PrefixID, "block", sk.Block,
+				"vrf", sk.VRF, "reason", sk.Reason)
+		}
 	}
 }
 
@@ -706,6 +728,14 @@ func Render(res *Result) ([]byte, error) {
 		"# prefixes=%d scan_policies=%d straggler_policies=%d snmp_policies=%d skipped=%d\n",
 		res.Summary.Prefixes, res.Summary.ScanPolicies, res.Summary.StragglerPolicies,
 		res.Summary.SNMPPolicies, len(res.Summary.Skipped))
+	const maxListed = 1000
+	for i, sk := range res.Summary.Skipped {
+		if i == maxListed {
+			header += fmt.Sprintf("# ... and %d more skipped\n", len(res.Summary.Skipped)-maxListed)
+			break
+		}
+		header += fmt.Sprintf("# skipped %s (prefix id %d, vrf %q): %s\n", sk.Block, sk.PrefixID, sk.VRF, sk.Reason)
+	}
 	return append([]byte(header), body...), nil
 }
 

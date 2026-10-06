@@ -191,6 +191,9 @@ func TestGenerateLeafSizeLimit(t *testing.T) {
 		mustSettings(t, cfg))
 	assert.Len(t, res.Summary.Skipped, 2)
 	assert.Nil(t, res.Policies[NetworkDiscoveryBackend])
+	out, err := Render(res)
+	require.NoError(t, err)
+	assert.Contains(t, string(out), "# skipped 198.51.100.0/23 (prefix id 1")
 }
 
 func manyLeaves(vrfID int, vrf string, n int, startID int) []*Prefix {

@@ -195,8 +195,10 @@ orb-agent netbox-render -c agent.yaml -o review.yaml  # write a file
 ```
 
 It reads NetBox with the same settings, prints the policies in the same shape
-as `orb.policies` with a summary header, logs the counts and every skipped
-block to stderr, and exits. Nothing is scanned and nothing is applied. With the
+as `orb.policies` with a header giving the counts and listing every skipped
+block (up to 1000) with its reason, logs the counts and one warning per skip
+reason to stderr (`-d` lists every skip), and exits. The file written to
+`generated_config_path` has the same header. Nothing is scanned and nothing is applied. With the
 docker image:
 
 ```bash
