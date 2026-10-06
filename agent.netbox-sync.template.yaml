@@ -1,0 +1,174 @@
+# orb-agent configuration template: NetBox prefix sync.
+#
+# The agent reads IPAM prefixes from NetBox and generates network_discovery
+# (and optionally snmp_discovery) policies from them. See
+# docs/NETBOX_PREFIX_SYNC.md for every key.
+#
+# This file is a TEMPLATE for automation. Placeholders come in two kinds:
+#
+#   1. Render-time placeholders, substituted by your automation before the file
+#      is deployed (schedules, limits, filters, names). They are listed in
+#      RENDER_VARS below.
+#   2. Runtime placeholders, left in the deployed file and resolved by the
+#      agent and its backends from their environment, so secrets never land
+#      on disk: NETBOX_URL, NETBOX_TOKEN, DIODE_TARGET, DIODE_CLIENT_ID,
+#      DIODE_CLIENT_SECRET, SNMP_COMMUNITY.
+#
+# The custom field tokens ${AGENT_NAME}, ${POLICY_NAME}, ${SCAN_TIMESTAMP} and
+# ${SCAN_DETAILS} inside custom_fields are resolved by network_discovery per
+# scan. Never substitute them at render time.
+#
+# Render with an explicit variable list so nothing else is touched:
+#
+#   RENDER_VARS='$ORB_AGENT_NAME $NETBOX_SCHEDULE $NETBOX_STATUSES $NETBOX_FILTERS
+#     $GENERATED_POLICIES_PATH $ND_SCHEDULE $ND_STRAGGLER_DELAY_MINUTES
+#     $ND_STAGGER_MINUTES $ND_TIMEOUT_MINUTES $ND_MAX_TARGETS_PER_POLICY
+#     $ND_MAX_HOSTS_PER_POLICY $ND_MAX_BLOCK_PREFIX_LEN_V4 $ND_MAX_BLOCK_PREFIX_LEN_V6
+#     $ND_TOP_PORTS $ND_STRAGGLER_ENABLED $ND_STRAGGLER_MAX_BLOCK_PREFIX_LEN_V4
+#     $ND_STRAGGLER_MAX_BLOCK_PREFIX_LEN_V6 $ND_STRAGGLER_MAX_HOSTS_PER_PARENT
+#     $SNMP_ENABLED $SNMP_SCHEDULE $SNMP_STAGGER_MINUTES $SNMP_MAX_TARGETS_PER_POLICY'
+#   envsubst "$RENDER_VARS" < agent.netbox-sync.template.yaml > agent.yaml
+#
+# Then review what it would do before running it:
+#
+#   orb-agent netbox-render -c agent.yaml -o generated-policies.yaml
+#
+# Typical values for the render-time variables:
+#
+#   ORB_AGENT_NAME=agent-01
+#   NETBOX_SCHEDULE="*/30 * * * *"
+#   NETBOX_STATUSES="[container, active]"
+#   NETBOX_FILTERS="{}"                      # or "{tag: [discover]}", "{vrf_id: [3, 4]}"
+#   GENERATED_POLICIES_PATH=/opt/orb/generated-policies.yaml
+#   ND_SCHEDULE="0 */6 * * *"
+#   ND_STRAGGLER_DELAY_MINUTES=30
+#   ND_STAGGER_MINUTES=60
+#   ND_TIMEOUT_MINUTES=60
+#   ND_MAX_TARGETS_PER_POLICY=256
+#   ND_MAX_HOSTS_PER_POLICY=65536
+#   ND_MAX_BLOCK_PREFIX_LEN_V4=16
+#   ND_MAX_BLOCK_PREFIX_LEN_V6=112
+#   ND_TOP_PORTS=100
+#   ND_STRAGGLER_ENABLED=true
+#   ND_STRAGGLER_MAX_BLOCK_PREFIX_LEN_V4=20
+#   ND_STRAGGLER_MAX_BLOCK_PREFIX_LEN_V6=116
+#   ND_STRAGGLER_MAX_HOSTS_PER_PARENT=16384
+#   SNMP_ENABLED=false
+#   SNMP_SCHEDULE="15 */6 * * *"
+#   SNMP_STAGGER_MINUTES=60
+#   SNMP_MAX_TARGETS_PER_POLICY=256
+orb:
+  config_manager:
+    active: netbox
+    sources:
+      netbox:
+        # NetBox base URL and API token, resolved from the agent's environment
+        # at startup. The token may be "Token <t>", "Bearer <t>" or bare; a bare
+        # nbt_ (v2) token is sent as Bearer, anything else as Token.
+        url: ${NETBOX_URL}
+        token: ${NETBOX_TOKEN}
+        # Only for a test NetBox with a self-signed certificate.
+        skip_tls_verify: false
+        # How often NetBox is re-read and the policies refreshed. A failed read
+        # keeps the running policies; nothing is removed.
+        schedule: "${NETBOX_SCHEDULE}"
+        # Per-request timeout in seconds, and retries for 429/5xx/network errors.
+        timeout: 30
+        retries: 3
+        # Page size for the NetBox API (the NetBox maximum is usually 1000).
+        page_size: 1000
+        # Prefix statuses that are scanned. Prefixes of every status are still
+        # read, because all of them count when working out what a parent's
+        # children already cover.
+        statuses: ${NETBOX_STATUSES}
+        # Extra query parameters for /api/ipam/prefixes/. Select whole subtrees
+        # (vrf_id, tenant_id, site_id, within_include, tag on every level...):
+        # a child the filter hides is treated as uncovered space by pass 2.
+        filters: ${NETBOX_FILTERS}
+        # The rendered policies are written here on every refresh, before they
+        # are applied, so they can be reviewed.
+        generated_config_path: ${GENERATED_POLICIES_PATH}
+        # Leave false: an empty answer from NetBox then never removes the
+        # running policies.
+        allow_empty: false
+
+        network_discovery:
+          enabled: true
+          # Pass 1: leaf prefixes (no children in the same VRF).
+          schedule: "${ND_SCHEDULE}"
+          # Pass 2 (stragglers) runs this many minutes after pass 1. Use
+          # straggler_schedule instead when the schedule cannot be shifted
+          # (the minute field must be a single number).
+          straggler_delay_minutes: ${ND_STRAGGLER_DELAY_MINUTES}
+          # straggler_schedule: "30 3 * * *"
+          # Spread the generated policies' start times over this many minutes.
+          stagger_minutes: ${ND_STAGGER_MINUTES}
+          # Policy timeout in minutes (nmap run time per policy).
+          timeout: ${ND_TIMEOUT_MINUTES}
+          # Batching: a policy holds at most this many prefixes and addresses,
+          # whichever limit is reached first. Batches never mix VRFs.
+          max_targets_per_policy: ${ND_MAX_TARGETS_PER_POLICY}
+          max_hosts_per_policy: ${ND_MAX_HOSTS_PER_POLICY}
+          # Leaf prefixes larger than this (a shorter mask) are skipped and logged.
+          max_block_prefix_len_v4: ${ND_MAX_BLOCK_PREFIX_LEN_V4}
+          max_block_prefix_len_v6: ${ND_MAX_BLOCK_PREFIX_LEN_V6}
+          # Merged into every generated policy's config. defaults.vrf, rd,
+          # vrf_tenant, vrf_tenant_group, tenant and tenant_group are ignored:
+          # they come from each NetBox prefix.
+          config:
+            defaults:
+              # Optional. Sent on every discovered address.
+              tags: [discovered]
+            custom_fields:
+              discovery_agent: "${AGENT_NAME}"
+              discovery_policy: "${POLICY_NAME}"
+              discovery_last_seen: "${SCAN_TIMESTAMP}"
+              # A NetBox json custom field for hostnames and ports.
+              # discovery_scan_details: "${SCAN_DETAILS}"
+            timestamp_precision: day
+          # Merged into every generated policy's scope. targets and subnet_map
+          # are generated.
+          scope:
+            top_ports: ${ND_TOP_PORTS}
+            timing: 3
+            max_retries: 1
+          # Pass 2: for every parent prefix, the space none of its direct
+          # children covers, filed under the parent's VRF, tenant and tags.
+          straggler:
+            enabled: ${ND_STRAGGLER_ENABLED}
+            max_block_prefix_len_v4: ${ND_STRAGGLER_MAX_BLOCK_PREFIX_LEN_V4}
+            max_block_prefix_len_v6: ${ND_STRAGGLER_MAX_BLOCK_PREFIX_LEN_V6}
+            max_hosts_per_parent: ${ND_STRAGGLER_MAX_HOSTS_PER_PARENT}
+            # Host discovery only, no port scan.
+            ping_only: true
+
+        snmp_discovery:
+          enabled: ${SNMP_ENABLED}
+          schedule: "${SNMP_SCHEDULE}"
+          stagger_minutes: ${SNMP_STAGGER_MINUTES}
+          max_targets_per_policy: ${SNMP_MAX_TARGETS_PER_POLICY}
+          max_hosts_per_policy: 65536
+          # Also poll the pass-2 leftover space.
+          include_stragglers: false
+          authentication:
+            protocol_version: SNMPv2c
+            community: ${SNMP_COMMUNITY}
+          # Merged into every generated policy's config. Site, tenant and the
+          # ip_address/prefix VRF and tenant come from each NetBox prefix.
+          # options.device_description_from_sysdescr and
+          # options.interface_description_from_ifalias default to false here,
+          # so hand-written descriptions are kept; set true to overwrite them.
+          config:
+            timeout: 5
+            options:
+              emit_prefixes: false
+
+  backends:
+    common:
+      diode:
+        target: ${DIODE_TARGET}
+        client_id: ${DIODE_CLIENT_ID}
+        client_secret: ${DIODE_CLIENT_SECRET}
+        agent_name: ${ORB_AGENT_NAME}
+    network_discovery: {}
+    snmp_discovery: {}

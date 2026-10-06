@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/netboxlabs/orb-agent/agent/backend/snmptelemetry"
 	"github.com/netboxlabs/orb-agent/agent/backend/worker"
 	"github.com/netboxlabs/orb-agent/agent/config"
+	"github.com/netboxlabs/orb-agent/agent/netboxsync"
 	"github.com/netboxlabs/orb-agent/agent/redact"
 	"github.com/netboxlabs/orb-agent/agent/version"
 )
@@ -31,8 +33,10 @@ const (
 )
 
 var (
-	cfgFiles []string
-	debug    bool
+	cfgFiles   []string
+	debug      bool
+	renderOut  string
+	renderTime time.Duration
 )
 
 func init() {
@@ -136,6 +140,58 @@ func Run(_ *cobra.Command, _ []string) {
 	<-done
 }
 
+// NetBoxRender fetches the prefixes from the NetBox source configured in
+// orb.config_manager.sources.netbox, prints or writes the policies the agent
+// would generate, and exits without running anything.
+func NetBoxRender(cmd *cobra.Command, _ []string) {
+	if err := netboxRender(cmd.Context(), os.Stdout, os.Stderr); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+}
+
+func netboxRender(ctx context.Context, stdout, stderr io.Writer) error {
+	if len(cfgFiles) == 0 {
+		return fmt.Errorf("no config file specified, use --config or -c flag to provide config files")
+	}
+	level := slog.LevelInfo
+	if debug {
+		level = slog.LevelDebug
+	}
+	logger := slog.New(slog.NewTextHandler(stderr, &slog.HandlerOptions{Level: level}))
+	cfg, err := config.Load(cfgFiles, logger)
+	if err != nil {
+		return fmt.Errorf("error loading configuration: %w", err)
+	}
+	syncer, err := netboxsync.NewSyncer(cfg.OrbAgent.ConfigManager.Sources.NetBox, logger)
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, renderTime)
+	defer cancel()
+	res, err := syncer.Run(ctx)
+	if err != nil {
+		return err
+	}
+	res.Summary.Log(logger)
+	data, err := netboxsync.Render(res)
+	if err != nil {
+		return err
+	}
+	if renderOut == "" || renderOut == "-" {
+		_, err = stdout.Write(data)
+		return err
+	}
+	if err := netboxsync.WriteFileAtomic(renderOut, data, 0o644); err != nil {
+		return err
+	}
+	logger.Info("wrote the generated policies", "path", renderOut)
+	return nil
+}
+
 func main() {
 	rootCmd := &cobra.Command{
 		Use: "orb-agent",
@@ -157,7 +213,22 @@ func main() {
 	runCmd.Flags().StringSliceVarP(&cfgFiles, "config", "c", []string{}, "Path to config files (may be specified multiple times)")
 	runCmd.PersistentFlags().BoolVarP(&debug, "debug", "d", false, "Enable verbose (debug level) output")
 
+	renderCmd := &cobra.Command{
+		Use:   "netbox-render",
+		Short: "Render the policies the netbox config manager would generate, then exit",
+		Long: `Read prefixes from the NetBox source in orb.config_manager.sources.netbox and
+print (or write with -o) the network_discovery and snmp_discovery policies the
+agent would generate, in the same shape as orb.policies. Nothing is scanned and
+no policy is applied, so the output can be reviewed before running the agent.`,
+		Run: NetBoxRender,
+	}
+	renderCmd.Flags().StringSliceVarP(&cfgFiles, "config", "c", []string{}, "Path to config files (may be specified multiple times)")
+	renderCmd.Flags().StringVarP(&renderOut, "output", "o", "", "Write the policies to this file instead of stdout")
+	renderCmd.Flags().DurationVar(&renderTime, "timeout", 5*time.Minute, "Overall timeout for reading NetBox")
+	renderCmd.Flags().BoolVarP(&debug, "debug", "d", false, "Enable verbose (debug level) output")
+
 	rootCmd.AddCommand(runCmd)
+	rootCmd.AddCommand(renderCmd)
 	rootCmd.AddCommand(versionCmd)
 	_ = rootCmd.Execute()
 }

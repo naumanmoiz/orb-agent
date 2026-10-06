@@ -1,0 +1,64 @@
+# Example orb-agent configuration: generate discovery policies from NetBox
+# IPAM prefixes. Every value here is a generic example; see
+# agent.netbox-sync.template.yaml for a fully commented template and
+# docs/NETBOX_PREFIX_SYNC.md for every key.
+#
+# Secrets come from the environment, never from this file:
+#   export NETBOX_URL=https://netbox.example.com NETBOX_TOKEN=...
+#   export DIODE_CLIENT_ID=... DIODE_CLIENT_SECRET=... SNMP_COMMUNITY=...
+#
+# Review what would be generated before running:
+#   orb-agent netbox-render -c agent.yaml -o generated-policies.yaml
+orb:
+  config_manager:
+    active: netbox
+    sources:
+      netbox:
+        url: ${NETBOX_URL}
+        token: ${NETBOX_TOKEN}
+        schedule: "*/30 * * * *"
+        statuses: [container, active]
+        filters:
+          tag: [discover]
+        generated_config_path: /opt/orb/generated-policies.yaml
+        network_discovery:
+          enabled: true
+          schedule: "0 */6 * * *"
+          straggler_delay_minutes: 30
+          stagger_minutes: 60
+          timeout: 60
+          max_targets_per_policy: 256
+          max_hosts_per_policy: 65536
+          config:
+            defaults:
+              tags: [discovered]
+            custom_fields:
+              discovery_agent: "${AGENT_NAME}"
+              discovery_last_seen: "${SCAN_TIMESTAMP}"
+            timestamp_precision: day
+          scope:
+            top_ports: 100
+            timing: 3
+          straggler:
+            enabled: true
+            max_block_prefix_len_v4: 20
+            max_block_prefix_len_v6: 116
+            max_hosts_per_parent: 16384
+            ping_only: true
+        snmp_discovery:
+          enabled: false
+          schedule: "15 */6 * * *"
+          authentication:
+            protocol_version: SNMPv2c
+            community: ${SNMP_COMMUNITY}
+          config:
+            timeout: 5
+  backends:
+    common:
+      diode:
+        target: grpc://diode.example.com:8080/diode
+        client_id: ${DIODE_CLIENT_ID}
+        client_secret: ${DIODE_CLIENT_SECRET}
+        agent_name: agent-01
+    network_discovery: {}
+    snmp_discovery: {}
