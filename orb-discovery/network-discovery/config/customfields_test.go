@@ -206,3 +206,13 @@ func TestValidateTimestampPrecision(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fortnight")
 }
+
+func TestScanDetailsTokenResolvesToMarker(t *testing.T) {
+	out, err := config.ResolveCustomFields(map[string]any{"scan_details": "${SCAN_DETAILS}"}, config.CustomFieldTokens{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := out["scan_details"].(config.ScanDetailsToken); !ok {
+		t.Fatalf("expected ScanDetailsToken, got %T", out["scan_details"])
+	}
+}

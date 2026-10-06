@@ -39,6 +39,11 @@ type SubnetMapEntry struct {
 	Vrf       string `yaml:"vrf,omitempty"`
 	Rd        string `yaml:"rd,omitempty"`
 	VrfTenant string `yaml:"vrf_tenant,omitempty"`
+	// VrfTenantGroup is the group of the VRF's own tenant. It defaults to this
+	// entry's tenant group, which is right when the VRF and the prefix are
+	// owned by tenants in the same group; set it when they are not, or the
+	// VRF reference cannot match the prebuilt VRF.
+	VrfTenantGroup string `yaml:"vrf_tenant_group,omitempty"`
 	// Tenant owns this subnet: it lands on the prefix and on every address
 	// discovered inside it. TenantGroup is inherited from defaults.tenant_group
 	// unless set here, since a deployment's tenants usually share one group.
@@ -51,6 +56,14 @@ type SubnetMapEntry struct {
 	MarkUtilized *bool          `yaml:"mark_utilized,omitempty"`
 	Tags         []string       `yaml:"tags,omitempty"`
 	CustomFields map[string]any `yaml:"custom_fields,omitempty"`
+	// AddressTags are added to every IP address discovered inside this entry,
+	// on top of defaults.tags. Tags (above) describe the prefix only.
+	AddressTags []string `yaml:"address_tags,omitempty"`
+	// EmitPrefix controls whether this entry is sent to NetBox as a Prefix.
+	// Unset means true. Set false when the prefix already exists in NetBox and
+	// the entry is only there to place the addresses inside it: the mask, VRF,
+	// tenant and address_tags still apply, but the prefix itself is left alone.
+	EmitPrefix *bool `yaml:"emit_prefix,omitempty"`
 
 	// network is the parsed, mask-normalized form of Prefix, filled in by
 	// ValidateSubnetMap. Entries are matched and emitted through it so a
@@ -79,6 +92,11 @@ func (e *SubnetMapEntry) UnmarshalYAML(node *yaml.Node) error {
 	}
 	*e = SubnetMapEntry(a)
 	return nil
+}
+
+// PrefixEmitted reports whether the entry is sent as a Prefix entity.
+func (e *SubnetMapEntry) PrefixEmitted() bool {
+	return e.EmitPrefix == nil || *e.EmitPrefix
 }
 
 // Network returns the entry's normalized network, or nil before validation.
@@ -139,6 +157,10 @@ func ValidateSubnetMap(entries []SubnetMapEntry, logger *slog.Logger) error {
 			if entry.Rd != "" {
 				return fmt.Errorf("subnet_map[%d]: rd is set without vrf; rd describes this entry's own vrf, "+
 					"and defaults.vrf is referenced with defaults.rd", i)
+			}
+			if entry.VrfTenantGroup != "" {
+				return fmt.Errorf("subnet_map[%d]: vrf_tenant_group is set without vrf; it describes this entry's "+
+					"own vrf, and defaults.vrf is referenced with defaults.vrf_tenant_group", i)
 			}
 			if entry.VrfTenant != "" {
 				return fmt.Errorf("subnet_map[%d]: vrf_tenant is set without vrf; vrf_tenant describes this entry's "+

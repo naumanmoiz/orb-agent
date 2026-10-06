@@ -73,6 +73,9 @@ type Defaults struct {
 	// name-only reference, and Diode creates a second VRF instead of matching.
 	// Set this to the tenant your prebuilt VRF carries.
 	VrfTenant string `yaml:"vrf_tenant,omitempty"`
+	// VrfTenantGroup is the group of VrfTenant, when it differs from
+	// TenantGroup. Unset, the VRF's tenant reference carries TenantGroup.
+	VrfTenantGroup string `yaml:"vrf_tenant_group,omitempty"`
 	// TenantGroup is the group the referenced tenants belong to. NetBox makes
 	// Tenant unique on (group, name) with nulls_distinct=False, so the plugin
 	// treats an absent group as "group IS NULL" and looks it up that way. A
@@ -106,6 +109,12 @@ type PolicyConfig struct {
 	// changes on every run makes every entity differ from what NetBox holds, so
 	// the reconciler rewrites all of them on every scan. See ResolvedTimestampPrecision.
 	TimestampPrecision string `yaml:"timestamp_precision,omitempty"`
+	// ScanDetailsInComments restores the legacy behaviour of writing the scan
+	// details (hostnames, ports) as JSON into each address's comments when
+	// defaults.comments is empty. Off by default: comments are often written by
+	// hand, and a scan should not overwrite them. The same details are
+	// available to a json custom field through the ${SCAN_DETAILS} token.
+	ScanDetailsInComments bool `yaml:"scan_details_in_comments,omitempty"`
 }
 
 // ResolvedTimestampPrecision returns the configured ${SCAN_TIMESTAMP} precision,

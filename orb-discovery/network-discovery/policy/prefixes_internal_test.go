@@ -405,3 +405,56 @@ func TestVrfReferenceCarriesNothingItDoesNotNeed(t *testing.T) {
 	// The tags did reach the prefix, which is where they belong.
 	require.Len(t, prefix.Tags, 2)
 }
+
+// emit_prefix: false keeps an entry out of the emitted prefixes while it still
+// places the addresses inside it.
+func TestEmitPrefixFalseSkipsThePrefix(t *testing.T) {
+	no := false
+	entries := []config.SubnetMapEntry{
+		{Prefix: "192.0.2.0/24", Vrf: "VRF-A", Tenant: "Tenant A", EmitPrefix: &no},
+		{Prefix: "192.0.2.0/25", Vrf: "VRF-A"},
+	}
+	r := prefixRunner(t, config.Defaults{}, entries)
+	prefixes := r.prefixEntities(nil, "p")
+	require.Len(t, prefixes, 1)
+	assert.Equal(t, "192.0.2.0/25", *prefixes[0].(*diode.Prefix).Prefix)
+
+	entries[1].EmitPrefix = &no
+	r = prefixRunner(t, config.Defaults{}, entries)
+	assert.Nil(t, r.prefixEntities(nil, "p"))
+
+	addr, entry := r.resolveAddress("192.0.2.200", "/32")
+	assert.Equal(t, "192.0.2.200/24", addr)
+	place := addressPlacement(r.config.Defaults, entry)
+	require.NotNil(t, place.vrf)
+	assert.Equal(t, "VRF-A", *place.vrf.Name)
+	assert.Equal(t, "Tenant A", *place.tenant.Name)
+}
+
+// vrf_tenant_group lets the VRF's tenant sit in a different group from the
+// prefix's tenant.
+func TestVrfTenantGroupOverridesTheEntryGroup(t *testing.T) {
+	entry := &config.SubnetMapEntry{
+		Prefix: "192.0.2.0/24", Vrf: "VRF-A", VrfTenant: "Tenant V", VrfTenantGroup: "Group V",
+		Tenant: "Tenant A", TenantGroup: "Group A",
+	}
+	place := addressPlacement(config.Defaults{}, entry)
+	require.NotNil(t, place.vrf.Tenant)
+	assert.Equal(t, "Group V", *place.vrf.Tenant.Group.Name)
+	assert.Equal(t, "Group A", *place.tenant.Group.Name)
+
+	entry.VrfTenantGroup = ""
+	place = addressPlacement(config.Defaults{}, entry)
+	assert.Equal(t, "Group A", *place.vrf.Tenant.Group.Name, "falls back to the entry's tenant group")
+
+	d := config.Defaults{Vrf: "VRF-B", VrfTenant: "Tenant V", VrfTenantGroup: "Group V", TenantGroup: "Group B"}
+	place = addressPlacement(d, nil)
+	assert.Equal(t, "Group V", *place.vrf.Tenant.Group.Name)
+}
+
+// vrf_tenant_group, like rd and vrf_tenant, describes the entry's own VRF.
+func TestVrfTenantGroupWithoutVrfIsRejected(t *testing.T) {
+	err := config.ValidateSubnetMap([]config.SubnetMapEntry{{Prefix: "192.0.2.0/24", VrfTenantGroup: "G"}}, testLogger())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "vrf_tenant_group")
+}

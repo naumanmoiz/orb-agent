@@ -23,7 +23,17 @@ const (
 	// config.timestamp_precision. It resolves to a time.Time, not a string, so it
 	// lands in a NetBox datetime custom field rather than a text one.
 	TokenScanTimestamp = "SCAN_TIMESTAMP"
+	// TokenScanDetails is replaced, per address, by a JSON document holding
+	// the host's scan details: reverse hostnames, open ports and port-state
+	// counts. Point it at a NetBox json custom field. It replaces the legacy
+	// habit of writing the same document into the address's comments.
+	TokenScanDetails = "SCAN_DETAILS"
 )
+
+// ScanDetailsToken marks a custom field whose value is filled in per address
+// from that address's scan details. It is what ResolveCustomFields returns for
+// ${SCAN_DETAILS}; the runner substitutes the JSON document.
+type ScanDetailsToken struct{}
 
 // Supported values for config.timestamp_precision.
 const (
@@ -182,6 +192,8 @@ func resolveCustomFieldString(value string, tokens CustomFieldTokens) (any, erro
 		return tokens.PolicyName, nil
 	case TokenScanTimestamp:
 		return tokens.ScanTime, nil
+	case TokenScanDetails:
+		return ScanDetailsToken{}, nil
 	}
 	if resolved := os.Getenv(name); resolved != "" {
 		return resolved, nil

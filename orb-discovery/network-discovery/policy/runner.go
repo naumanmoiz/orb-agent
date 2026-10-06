@@ -452,7 +452,15 @@ func (r *Runner) prefixEntities(customFields map[string]any, policyName string) 
 	builder := newPrefixBuilder(r.config.Defaults, r.logger, policyName)
 	for i := range r.scope.SubnetMap {
 		entry := &r.scope.SubnetMap[i]
+		if !entry.PrefixEmitted() {
+			// The prefix already exists in NetBox; the entry only places the
+			// addresses discovered inside it.
+			continue
+		}
 		builder.add(entry, config.MergeCustomFields(customFields, entry.CustomFields))
+	}
+	if len(builder.entities()) == 0 {
+		return nil
 	}
 	entities := builder.entities()
 	r.logger.Info("emitting prefixes declared by subnet_map",
@@ -487,6 +495,9 @@ func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr string, entry *con
 		Address: diode.String(ipAddr),
 	}
 	for key, value := range customFields {
+		if _, perHost := value.(config.ScanDetailsToken); perHost {
+			continue // filled in below, once the host's details are known
+		}
 		if err := ip.SetCustomField(key, value); err != nil {
 			// One bad value should not cost the whole address.
 			r.logger.Error("skipping custom field on ip address", "error", err,
@@ -509,19 +520,35 @@ func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr string, entry *con
 	if r.config.Defaults.Role != "" {
 		ip.Role = diode.String(r.config.Defaults.Role)
 	}
-	if len(r.config.Defaults.Tags) > 0 {
+	tagNames := r.config.Defaults.Tags
+	if entry != nil && len(entry.AddressTags) > 0 {
+		tagNames = mergeTags(tagNames, entry.AddressTags)
+	}
+	if len(tagNames) > 0 {
 		var tags []*diode.Tag
-		for _, tag := range r.config.Defaults.Tags {
+		for _, tag := range tagNames {
 			tags = append(tags, &diode.Tag{Name: diode.String(tag)})
 		}
 		ip.Tags = tags
 	}
 
-	canRecord := !hasComments
-	outcome, recordedHostnames := r.applyHostname(ip, host.Hostnames, addr, policyName, canRecord)
+	// Scan details are written to comments only on explicit opt-in: comments
+	// are commonly hand-written, and a scan must not overwrite them.
+	writeComments := !hasComments && r.config.ScanDetailsInComments
+	outcome, recordedHostnames := r.applyHostname(ip, host.Hostnames, addr, policyName, writeComments)
 
-	if !hasComments {
-		metadata := config.HostMetadata{Hostnames: recordedHostnames}
+	needDetails := writeComments || hasScanDetailsToken(customFields)
+	if needDetails {
+		hostnames := recordedHostnames
+		if !writeComments {
+			// The ${SCAN_DETAILS} document carries every reverse name nmap
+			// reported, not only the one dns_name could not hold.
+			hostnames = nil
+			for _, h := range host.Hostnames {
+				hostnames = append(hostnames, config.Hostname{Name: h.Name, Type: h.Type})
+			}
+		}
+		metadata := config.HostMetadata{Hostnames: hostnames}
 
 		if host.ExtraPorts != nil {
 			metadata.ExtraPorts = make([]config.ExtraPort, len(host.ExtraPorts))
@@ -547,7 +574,18 @@ func (r *Runner) ipAddressEntity(host nmap.Host, ipAddr, addr string, entry *con
 		if err != nil {
 			r.logger.Error("error marshalling metadata", "error", err, "policy", policyName)
 		} else {
-			ip.Comments = diode.String(string(data))
+			if writeComments {
+				ip.Comments = diode.String(string(data))
+			}
+			for key, value := range customFields {
+				if _, ok := value.(config.ScanDetailsToken); !ok {
+					continue
+				}
+				if err := ip.SetCustomField(key, json.RawMessage(data)); err != nil {
+					r.logger.Error("skipping custom field on ip address", "error", err,
+						"custom_field", key, "ip_address", ipAddr, "policy", policyName)
+				}
+			}
 		}
 	}
 	return ip, outcome
@@ -583,4 +621,15 @@ func entryCustomFields(base map[string]any, entry *config.SubnetMapEntry,
 		return merged
 	}
 	return base
+}
+
+// hasScanDetailsToken reports whether any custom field asks for the per-host
+// ${SCAN_DETAILS} document.
+func hasScanDetailsToken(customFields map[string]any) bool {
+	for _, value := range customFields {
+		if _, ok := value.(config.ScanDetailsToken); ok {
+			return true
+		}
+	}
+	return false
 }

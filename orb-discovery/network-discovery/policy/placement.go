@@ -68,9 +68,10 @@ func prefixPlacement(defaults config.Defaults, entry *config.SubnetMapEntry) pla
 // without a vrf for the same reason.
 func vrfFor(defaults config.Defaults, entry *config.SubnetMapEntry, group string) *diode.VRF {
 	if entry != nil && entry.Vrf != "" {
-		return vrfReference(entry.Vrf, entry.Rd, entry.VrfTenant, group)
+		return vrfReference(entry.Vrf, entry.Rd, entry.VrfTenant, firstNonEmpty(entry.VrfTenantGroup, group))
 	}
-	return vrfReference(defaults.Vrf, defaults.Rd, defaults.VrfTenant, defaults.TenantGroup)
+	return vrfReference(defaults.Vrf, defaults.Rd, defaults.VrfTenant,
+		firstNonEmpty(defaults.VrfTenantGroup, defaults.TenantGroup))
 }
 
 // tenantNameFor returns the tenant owning an address: the entry's, else the

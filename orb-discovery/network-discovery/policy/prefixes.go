@@ -72,6 +72,10 @@ func (b *prefixBuilder) add(entry *config.SubnetMapEntry, customFields map[strin
 		prefix.Tags = tags
 	}
 	for key, value := range customFields {
+		if _, perHost := value.(config.ScanDetailsToken); perHost {
+			// ${SCAN_DETAILS} describes one scanned host; a prefix has none.
+			continue
+		}
 		if err := prefix.SetCustomField(key, value); err != nil && b.logger != nil {
 			// One bad value should not cost the prefix.
 			b.logger.Error("skipping custom field on prefix", "error", err,
