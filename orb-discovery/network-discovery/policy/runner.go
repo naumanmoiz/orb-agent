@@ -188,6 +188,10 @@ func (r *Runner) run() {
 		options = append(options, nmap.WithPortExclusions(r.scope.ExcludePorts...))
 	}
 
+	if len(r.scope.ExcludeTargets) > 0 {
+		options = append(options, nmap.WithTargetExclusions(r.scope.ExcludeTargets...))
+	}
+
 	if len(r.scope.DNSServers) > 0 {
 		options = append(options, nmap.WithCustomDNSServers(r.scope.DNSServers...))
 	}

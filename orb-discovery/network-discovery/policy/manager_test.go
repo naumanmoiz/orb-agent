@@ -121,7 +121,7 @@ func TestManagerGetCapabilities(t *testing.T) {
 	manager := &policy.Manager{}
 
 	capabilities := manager.GetCapabilities()
-	assert.Equal(t, []string{"targets, ports, exclude_ports, timing, fast_mode, ping_scan, top_ports, scan_types, max_retries, subnet_map, subnet_map.vrf, subnet_map.tenant"}, capabilities)
+	assert.Equal(t, []string{"targets, exclude_targets, ports, exclude_ports, timing, fast_mode, ping_scan, top_ports, scan_types, max_retries, subnet_map, subnet_map.vrf, subnet_map.tenant"}, capabilities)
 }
 
 func TestManagerGetPolicyStatuses(t *testing.T) {
@@ -162,4 +162,27 @@ func TestManagerGetPolicyStatuses(t *testing.T) {
 	// If no runs were created, statuses will be empty
 	// If runs were created, statuses will include the policy
 	// This depends on whether the runner actually ran and created runs
+}
+
+func TestManagerStartPolicyRejectsBadExcludeTargets(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	manager := policy.NewManager(context.Background(), logger, nil)
+	err := manager.StartPolicy("p", config.Policy{Scope: config.Scope{
+		Targets:        []string{"192.0.2.0/24"},
+		ExcludeTargets: []string{"192.0.2.1", "fw-01"},
+	}})
+	assert.ErrorContains(t, err, `exclude_targets: "fw-01" is not an IP address or CIDR`)
+}
+
+func TestManagerParsePoliciesExcludeTargets(t *testing.T) {
+	manager := &policy.Manager{}
+	policies, err := manager.ParsePolicies([]byte(`
+policies:
+  p:
+    scope:
+      targets: [192.0.2.0/24]
+      exclude_targets: [192.0.2.1, 192.0.2.128/28]
+`))
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"192.0.2.1", "192.0.2.128/28"}, policies["p"].Scope.ExcludeTargets)
 }

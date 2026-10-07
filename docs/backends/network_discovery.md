@@ -98,6 +98,7 @@ The scope defines a list of targets to be scanned.
 | timing | int | no | Set timing template, higher is faster (-T<0-5>). |
 | ports | list | no | Only scan specified ports (-p). Sample: [22,161,162,443,500-600,8080]. |
 | exclude_ports | list | no | Exclude the specified ports from scanning. Sample: [23, 9000-12000]. |
+| exclude_targets | list | no | IP addresses or CIDRs never probed (nmap `--exclude`), e.g. firewall interfaces that drop probes. Sample: [10.0.0.1, 192.0.2.0/28]. |
 | ping_scan | bool | no | Ping Scan (-sn) - disable port scan. If `scan_types` is defined, `ping_scan` will be ignored. |
 | top_ports | int | no | Scan <number> most common ports (--top-ports). |
 | max_retries | int | no | Caps number of port scan probe retransmissions (--max-retries). |

@@ -41,6 +41,7 @@ type Scope struct {
 	Targets        []string `yaml:"targets"`
 	Ports          []string `yaml:"ports,omitempty"`
 	ExcludePorts   []string `yaml:"exclude_ports,omitempty"`
+	ExcludeTargets []string `yaml:"exclude_targets,omitempty"` // IPs/CIDRs never probed (nmap --exclude)
 	Timing         *int     `yaml:"timing,omitempty"`
 	FastMode       *bool    `yaml:"fast_mode,omitempty"`
 	PingScan       *bool    `yaml:"ping_scan,omitempty"`

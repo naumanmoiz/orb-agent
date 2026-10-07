@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 
 	"github.com/netboxlabs/diode-sdk-go/diode"
 	"gopkg.in/yaml.v3"
@@ -74,6 +75,14 @@ func (m *Manager) StartPolicy(name string, policy config.Policy) error {
 		return fmt.Errorf("%s : no targets found in the policy", name)
 	}
 
+	for _, t := range policy.Scope.ExcludeTargets {
+		if net.ParseIP(t) == nil {
+			if _, _, err := net.ParseCIDR(t); err != nil {
+				return fmt.Errorf("%s : exclude_targets: %q is not an IP address or CIDR", name, t)
+			}
+		}
+	}
+
 	if err := config.ValidateSubnetMap(policy.Scope.SubnetMap, m.logger); err != nil {
 		m.logger.Error("policy rejected: invalid subnet_map", "error", err, "policy", name)
 		return fmt.Errorf("%s : %w", name, err)
@@ -141,7 +150,7 @@ func (m *Manager) Stop() error {
 
 // GetCapabilities returns the capabilities of network-discovery
 func (m *Manager) GetCapabilities() []string {
-	return []string{"targets, ports, exclude_ports, timing, fast_mode, ping_scan, top_ports, scan_types, max_retries, subnet_map, subnet_map.vrf, subnet_map.tenant"}
+	return []string{"targets, exclude_targets, ports, exclude_ports, timing, fast_mode, ping_scan, top_ports, scan_types, max_retries, subnet_map, subnet_map.vrf, subnet_map.tenant"}
 }
 
 // Status represents the status of a policy with its runs
