@@ -35,6 +35,8 @@ type ClientOptions struct {
 	Timeout       time.Duration
 	Retries       int
 	PageSize      int
+	// Branch is a netbox-branching branch name or schema ID. Empty reads main.
+	Branch string
 	// Backoff is the delay before the first retry; it doubles each time.
 	Backoff time.Duration
 	Logger  *slog.Logger
@@ -49,6 +51,10 @@ type Client struct {
 	pageSize int
 	backoff  time.Duration
 	logger   *slog.Logger
+	// branch is the configured branch; branchSchema is its schema ID, sent
+	// as X-NetBox-Branch once resolved.
+	branch       string
+	branchSchema string
 }
 
 // NewClient builds a client. The URL must be absolute.
@@ -98,7 +104,45 @@ func NewClient(opts ClientOptions) (*Client, error) {
 		pageSize: pageSize,
 		backoff:  backoff,
 		logger:   logger,
+		branch:   strings.TrimSpace(opts.Branch),
 	}, nil
+}
+
+// resolveBranch looks up the configured branch by name, then by schema ID,
+// on every inventory read, so a branch that is deleted or recreated is
+// noticed instead of reading stale data. Only a ready branch is accepted: a
+// merged or archived one no longer reflects what discovery writes.
+func (c *Client) resolveBranch(ctx context.Context) error {
+	c.branchSchema = ""
+	if c.branch == "" {
+		return nil
+	}
+	type nbBranch struct {
+		Name     string `json:"name"`
+		SchemaID string `json:"schema_id"`
+		Status   struct {
+			Value string `json:"value"`
+		} `json:"status"`
+	}
+	for _, key := range []string{"name", "schema_id"} {
+		raw, err := c.list(ctx, "/api/plugins/branching/branches/", url.Values{key: {c.branch}})
+		if err != nil {
+			return fmt.Errorf("netbox branch %q: %w", c.branch, err)
+		}
+		if len(raw) == 0 {
+			continue
+		}
+		var b nbBranch
+		if err := json.Unmarshal(raw[0], &b); err != nil {
+			return fmt.Errorf("netbox branch %q: invalid JSON: %w", c.branch, err)
+		}
+		if b.Status.Value != "ready" {
+			return fmt.Errorf("netbox branch %q is %s, not ready", c.branch, b.Status.Value)
+		}
+		c.branchSchema = b.SchemaID
+		return nil
+	}
+	return fmt.Errorf("netbox branch %q not found (by name or schema_id)", c.branch)
 }
 
 // AuthorizationHeader returns the Authorization header value for a token.
@@ -185,6 +229,9 @@ func (c *Client) do(ctx context.Context, rawURL string, out any) (bool, error) {
 	}
 	req.Header.Set("Authorization", c.auth)
 	req.Header.Set("Accept", "application/json")
+	if c.branchSchema != "" {
+		req.Header.Set("X-NetBox-Branch", c.branchSchema)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if ctx.Err() != nil {
@@ -264,6 +311,9 @@ type Inventory struct {
 func (c *Client) FetchInventory(ctx context.Context, filters map[string]any) (*Inventory, error) {
 	query, err := filterValues(filters)
 	if err != nil {
+		return nil, err
+	}
+	if err := c.resolveBranch(ctx); err != nil {
 		return nil, err
 	}
 	rawPrefixes, err := c.list(ctx, "/api/ipam/prefixes/", query)

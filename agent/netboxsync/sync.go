@@ -34,6 +34,7 @@ func NewSyncer(cfg config.NetBoxManager, logger *slog.Logger) (*Syncer, error) {
 		URL:           url,
 		Token:         token,
 		SkipTLSVerify: cfg.SkipTLSVerify,
+		Branch:        cfg.Branch,
 		Retries:       intOr(cfg.Retries, defaultRetries),
 		PageSize:      cfg.PageSize,
 		Logger:        logger,

@@ -99,3 +99,36 @@ func TestNewClientValidates(t *testing.T) {
 }
 
 func itoa(i int) string { return strconv.Itoa(i) }
+
+func TestFetchInventoryReadsBranch(t *testing.T) {
+	nb := newFakeNetBox(t)
+	nb.addBranch("Dev", "ab12cd34", "ready")
+	nb.addBranch("Old", "ef56gh78", "merged")
+	srv := nb.serve()
+
+	for _, ref := range []string{"Dev", "ab12cd34"} {
+		c, err := NewClient(ClientOptions{URL: srv.URL, Token: "secret-v1", Branch: ref, Backoff: time.Millisecond})
+		require.NoError(t, err)
+		_, err = c.FetchInventory(context.Background(), nil)
+		require.NoError(t, err, ref)
+	}
+	for _, path := range []string{"/api/ipam/prefixes/", "/api/ipam/vrfs/", "/api/tenancy/tenants/"} {
+		assert.Equal(t, []string{"ab12cd34", "ab12cd34"}, nb.headers[path], path)
+	}
+	for _, h := range nb.headers["/api/plugins/branching/branches/"] {
+		assert.Empty(t, h, "the branch lookup itself reads main")
+	}
+
+	for ref, msg := range map[string]string{"Old": "not ready", "Nope": "not found"} {
+		c, err := NewClient(ClientOptions{URL: srv.URL, Token: "secret-v1", Branch: ref, Backoff: time.Millisecond})
+		require.NoError(t, err)
+		_, err = c.FetchInventory(context.Background(), nil)
+		require.Error(t, err, ref)
+		assert.Contains(t, err.Error(), msg)
+	}
+
+	c := testClient(t, srv.URL, "secret-v1", 0)
+	_, err := c.FetchInventory(context.Background(), nil)
+	require.NoError(t, err)
+	assert.Equal(t, "", nb.headers["/api/ipam/prefixes/"][2], "no branch reads main")
+}

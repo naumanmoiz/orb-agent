@@ -79,6 +79,10 @@ type NetBoxManager struct {
 	// from the environment.
 	Token         string `yaml:"token"`
 	SkipTLSVerify bool   `yaml:"skip_tls_verify"`
+	// Branch reads prefixes, VRFs and tenants from a netbox-branching branch
+	// (name or schema ID) instead of main, e.g. the branch Diode writes to,
+	// so subnets discovered there are scanned before the branch is merged.
+	Branch string `yaml:"branch,omitempty"`
 	// Schedule is the cron expression on which NetBox is re-read. Unset means
 	// the policies are generated once at startup.
 	Schedule *string `yaml:"schedule,omitempty"`

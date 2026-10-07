@@ -18,11 +18,13 @@ type fakeNetBox struct {
 	prefixes []map[string]any
 	vrfs     []map[string]any
 	tenants  []map[string]any
+	branches []map[string]any
 
 	mu       sync.Mutex
 	requests map[string]int
 	queries  []string
-	failNext int // respond 503 this many times first
+	headers  map[string][]string // X-NetBox-Branch value per path
+	failNext int                 // respond 503 this many times first
 }
 
 func newFakeNetBox(t *testing.T) *fakeNetBox {
@@ -39,6 +41,10 @@ func (f *fakeNetBox) handle(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.requests[r.URL.Path]++
 	f.queries = append(f.queries, r.URL.RawQuery)
+	if f.headers == nil {
+		f.headers = map[string][]string{}
+	}
+	f.headers[r.URL.Path] = append(f.headers[r.URL.Path], r.Header.Get("X-NetBox-Branch"))
 	fail := f.failNext > 0
 	if fail {
 		f.failNext--
@@ -60,6 +66,13 @@ func (f *fakeNetBox) handle(w http.ResponseWriter, r *http.Request) {
 		all = f.vrfs
 	case "/api/tenancy/tenants/":
 		all = f.tenants
+	case "/api/plugins/branching/branches/":
+		for _, b := range f.branches {
+			if (r.URL.Query().Has("name") && b["name"] == r.URL.Query().Get("name")) ||
+				(r.URL.Query().Has("schema_id") && b["schema_id"] == r.URL.Query().Get("schema_id")) {
+				all = append(all, b)
+			}
+		}
 	default:
 		http.NotFound(w, r)
 		return
@@ -83,6 +96,12 @@ func (f *fakeNetBox) handle(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"count": len(all), "next": next, "previous": nil, "results": results,
+	})
+}
+
+func (f *fakeNetBox) addBranch(name, schemaID, status string) {
+	f.branches = append(f.branches, map[string]any{
+		"name": name, "schema_id": schemaID, "status": map[string]any{"value": status},
 	})
 }
 
