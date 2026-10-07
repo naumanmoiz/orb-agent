@@ -1,0 +1,75 @@
+# Seeding agent: SNMP discovery of the core routers and L3 switches that own
+# each site's subnets. It creates the devices, interfaces, IPs, VLANs and,
+# above all, the prefixes that the prefix sync agent then scans
+# (agent.netbox-sync.example.yaml). Run the two side by side with different
+# agent_name values; never let both SNMP-poll the same device.
+#
+# Before the first run:
+#   - Create the sites and VRFs (with RD) in NetBox by hand. Discovery only
+#     references them; a name that does not match exactly creates a new one.
+#   - Give every switch the SNMPv3 user from docs/SNMP_DEVICE_SETUP.md.
+#   - Secrets come from the environment, never from this file:
+#       SNMP_USER, SNMP_AUTH_PASS, SNMP_PRIV_PASS (8+ characters each),
+#       DIODE_CLIENT_ID, DIODE_CLIENT_SECRET
+#
+# Write one policy per site and VRF: the defaults below are what make the
+# discovered prefixes land in the right VRF and get picked up by prefix sync.
+orb:
+  config_manager:
+    active: local
+  backends:
+    common:
+      diode:
+        target: grpc://diode.example.com:8080/diode
+        client_id: ${DIODE_CLIENT_ID}
+        client_secret: ${DIODE_CLIENT_SECRET}
+        agent_name: orb-agent-seed     # literal; must differ from the scan agent's
+        # dry_run: true                # first run: write entities to files instead of Diode
+        # dry_run_output_dir: /var/lib/orb-agent/dryrun
+    snmp_discovery: {}
+  policies:
+    snmp_discovery:
+      seed-site-a:
+        config:
+          # Before the scan agent's NetBox refresh, so new prefixes are scanned
+          # on the same cycle.
+          schedule: "0 */6 * * *"
+          timeout: 300                 # per-device walk budget (s); must exceed snmp_timeout
+          snmp_timeout: 10
+          retries: 2
+          defaults:
+            site: Site A               # must exist in NetBox
+            role: Core
+            # VRF in full (name + rd + tenant) under BOTH ip_address and prefix:
+            # without the RD the plugin cannot match an existing VRF and
+            # creates a second one with the same name.
+            ip_address:
+              vrf: {name: VRF-A, rd: "65000:100", tenant: Tenant A, tenant_group: Group A}
+              tenant: {name: Tenant A, group: Group A}
+            prefix:
+              vrf: {name: VRF-A, rd: "65000:100", tenant: Tenant A, tenant_group: Group A}
+              tenant: {name: Tenant A, group: Group A}
+              scope_site: Site A
+              # The prefix sync filter selects on this tag; without it the
+              # discovered subnets are never scanned.
+              tags: [discover]
+            vlan:
+              # Per-site group, so VLAN 10 at two sites stays two VLANs.
+              group: {name: Site A VLANs, scope_site: Site A}
+          options:
+            emit_prefix_vlan: svi-name           # prefix -> VLAN of its SVI
+            emit_svi_vlan: true                  # SVI interface -> its VLAN
+            device_description_from_sysdescr: false
+            interface_description_from_ifalias: false
+        scope:
+          targets:
+            - host: 192.0.2.1                    # core router / L3 switch management IPs
+            - host: 192.0.2.2
+          authentication:
+            protocol_version: SNMPv3
+            security_level: authPriv
+            username: ${SNMP_USER}
+            auth_protocol: SHA
+            auth_passphrase: ${SNMP_AUTH_PASS}
+            priv_protocol: AES
+            priv_passphrase: ${SNMP_PRIV_PASS}

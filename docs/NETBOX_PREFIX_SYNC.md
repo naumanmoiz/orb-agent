@@ -255,6 +255,28 @@ not be substituted, which is why the template names the agent
 `${ORB_AGENT_NAME}` at render time. The variable list and typical values are
 at the top of the template.
 
+## Seeding prefixes with SNMP
+
+Prefix sync only scans prefixes that already exist. To have the subnets
+behind your routers created for you, run a second agent with
+[agent.seed-snmp.example.yaml](../agent.seed-snmp.example.yaml): SNMP
+discovery of the core routers and L3 switches, which creates a prefix for
+every interface subnet. On its next refresh, prefix sync picks those prefixes
+up and scans them.
+
+For that to work:
+
+- Point prefix sync at the branch Diode writes to (`branch`), or the new
+  prefixes stay invisible to it until the branch is merged.
+- Give the seed policy's `defaults.prefix.tags` the tag your `filters` select
+  on (for example `discover`).
+- Name the VRF in full (`name`, `rd`, `tenant`) under both
+  `defaults.ip_address` and `defaults.prefix`, and create sites and VRFs in
+  NetBox beforehand. A VRF named without its RD does not match the existing
+  one, and a second VRF is created.
+- Use a different `agent_name` for each agent, and do not let both
+  SNMP-poll the same device.
+
 ## Limitations
 
 - `filters` narrow the single prefix read. A child hidden by a filter does not
