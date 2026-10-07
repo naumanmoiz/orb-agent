@@ -83,6 +83,7 @@ orb:
 | `url` | string | required | NetBox base URL, e.g. `https://netbox.example.com`. `${VAR}` is resolved from the environment. |
 | `token` | string | required | API token. `Token <t>` and `Bearer <t>` are sent as is; a bare token is sent as `Bearer` when it starts with `nbt_` (NetBox v2 tokens) and as `Token` otherwise. `${VAR}` is resolved from the environment. The token needs read access to prefixes, VRFs and tenants. |
 | `skip_tls_verify` | bool | `false` | Skip TLS verification. |
+| `branch` | string | unset | Read from a netbox-branching branch (name or schema ID) instead of main, e.g. the branch Diode writes to, so subnets discovered there are scanned before the branch is merged. Resolved on every refresh; a missing branch, or one that is not `ready` (merged, archived), fails the refresh and the running policies are kept. The token also needs read access to branches. |
 | `schedule` | cron | unset | When NetBox is re-read. Unset: the policies are generated once at startup, and a NetBox error at startup fails the agent. Set: a startup error is retried on the schedule. |
 | `timeout` | int (s) | `30` | Per-request HTTP timeout. |
 | `retries` | int | `3` | Retries for network errors, HTTP 429 and 5xx, with exponential backoff from 1 s. Other 4xx fail at once. |
@@ -128,7 +129,10 @@ orb:
 | `include_stragglers` | bool | `false` | Also poll the pass-2 leftover blocks, with their parent's attributes. |
 | `max_targets_per_policy` / `max_hosts_per_policy` | int | `256` / `65536` | Batching limits. |
 | `authentication` | map | `{}` | Copied into every policy's `scope.authentication`. Keep secrets as `${VAR}` (e.g. `community: ${SNMP_COMMUNITY}`); snmp-discovery resolves them from its environment, so they never reach the generated file. |
-| `config` | map | `{}` | Merged into every policy's `config`. `defaults.tenant` and `defaults.ip_address`/`defaults.prefix` `vrf`, `vrf_ipv4`, `vrf_ipv6` and `tenant` are removed with a warning: they come from each prefix. `options.device_description_from_sysdescr` and `options.interface_description_from_ifalias` default to `false` here. |
+| `config` | map | `{}` | Merged into every policy's `config`. `defaults.tenant` and `defaults.ip_address`/`defaults.prefix` `vrf`, `vrf_ipv4`, `vrf_ipv6` and `tenant` are removed with a warning: they come from each prefix. `options.device_description_from_sysdescr` and `options.interface_description_from_ifalias` default to `false` here. `timeout` is the per-device walk budget in seconds and must exceed `snmp_timeout` (default 5); `netbox-render` rejects anything else. |
+
+Switch-side setup (Cisco IOS-XE, Dell OS10, SONiC) and the SNMPv3 settings
+to use are in [SNMP_DEVICE_SETUP.md](SNMP_DEVICE_SETUP.md).
 
 Each SNMP target carries `override_defaults` built from its prefix: `site`
 (the prefix scope's site name when `scope_type` is `dcim.site`, or the legacy
