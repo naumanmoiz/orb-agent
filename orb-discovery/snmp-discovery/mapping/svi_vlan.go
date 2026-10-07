@@ -154,3 +154,24 @@ func ResolveSviVlans(
 	}
 	return out
 }
+
+// AttachSviVlans sets each SVI-style interface resolved by ResolveSviVlans to
+// mode access with its VLAN untagged. An interface that already carries a
+// mode (classified from bridge or VLAN membership tables) is left as is, so
+// the device's own membership data always wins over a name parse.
+func AttachSviVlans(ifIndexByIface map[*diode.Interface]int, sviVlanByIfIndex map[int]*diode.VLAN, logger *slog.Logger) int {
+	n := 0
+	for iface, idx := range ifIndexByIface {
+		vlan, ok := sviVlanByIfIndex[idx]
+		if !ok || iface == nil || iface.Mode != nil {
+			continue
+		}
+		iface.Mode = StringPtr("access")
+		iface.UntaggedVlan = vlan
+		n++
+	}
+	if n > 0 {
+		logger.Debug("svi vlan: associated SVI interfaces with their VLAN", "count", n)
+	}
+	return n
+}

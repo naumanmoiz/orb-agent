@@ -637,6 +637,14 @@ type Options struct {
 	// manual correction is overwritten on the next poll.
 	EmitPrefixVlan *string `yaml:"emit_prefix_vlan,omitempty"`
 
+	// Sets an SVI-style interface (Vlan10, vlanif10, ...) to mode access with
+	// its own VLAN as the untagged VLAN, using the same name parse and VLAN
+	// database check as emit_prefix_vlan "svi-name". Off by default, for the
+	// same reason: the reconciler cannot retract the association later.
+	// Interfaces that already got a mode from bridge/VLAN membership are left
+	// alone.
+	EmitSviVlan *bool `yaml:"emit_svi_vlan,omitempty"`
+
 	// Tri-state pointer; unset defaults to TRUE — Device.description is
 	// filled from sysDescr, matching legacy behaviour. Set false to leave the
 	// description off the emitted device so a hand-written NetBox description
@@ -694,6 +702,12 @@ func (o *Options) PrefixVlanMode() string {
 	default:
 		return "off"
 	}
+}
+
+// SviVlanEnabled returns the effective emit_svi_vlan toggle, defaulting to
+// false.
+func (o *Options) SviVlanEnabled() bool {
+	return o != nil && o.EmitSviVlan != nil && *o.EmitSviVlan
 }
 
 // PrefixScopeCascadeEnabled returns the effective

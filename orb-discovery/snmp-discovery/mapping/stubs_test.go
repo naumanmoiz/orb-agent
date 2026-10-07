@@ -210,6 +210,22 @@ func TestNewDeviceStub_NoMetadataWhenSourceMatchAbsent(t *testing.T) {
 	assert.Nil(t, stub.Metadata)
 }
 
+// emit_svi_vlan sets mode and untagged VLAN on SVIs, which carry IPs and so
+// only reach the wire as this stub.
+func TestNewInterfaceStub_KeepsSviVlan(t *testing.T) {
+	vid := int64(10)
+	vlan := &diode.VLAN{Vid: &vid, Name: strPtr("HOUSE")}
+	stub := newInterfaceStub(&diode.Interface{
+		Name: strPtr("Vlan10"), Type: strPtr("virtual"), Mode: strPtr("access"), UntaggedVlan: vlan,
+	}, &diode.Device{Name: strPtr("r1")})
+	assert.Equal(t, "access", *stub.Mode)
+	assert.Same(t, vlan, stub.UntaggedVlan)
+
+	routed := newInterfaceStub(&diode.Interface{Name: strPtr("Gi0/0/0"), Type: strPtr("1000base-t")}, nil)
+	assert.Nil(t, routed.Mode)
+	assert.Nil(t, routed.UntaggedVlan)
+}
+
 func TestNewInterfaceStub_Nil(t *testing.T) {
 	assert.Nil(t, newInterfaceStub(nil, nil))
 }

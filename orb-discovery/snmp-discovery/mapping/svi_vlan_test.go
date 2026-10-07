@@ -227,3 +227,23 @@ func TestResolveSviVlans_RefusesAVidNamedDifferentlyAcrossVtpDomains(t *testing.
 	assert.Same(t, vlan30, got[2], "domains agreeing on the name still resolve")
 	assert.Len(t, got, 1)
 }
+
+func TestAttachSviVlans(t *testing.T) {
+	vid := func(n int64) *diode.VLAN { return &diode.VLAN{Vid: &n} }
+	v10, v20 := vid(10), vid(20)
+	svi := &diode.Interface{Name: StringPtr("Vlan10")}
+	trunk := &diode.Interface{Name: StringPtr("Vlan20"), Mode: StringPtr("tagged")}
+	routed := &diode.Interface{Name: StringPtr("GigabitEthernet0/0/0")}
+	ifIndex := map[*diode.Interface]int{svi: 10, trunk: 20, routed: 1}
+
+	n := AttachSviVlans(ifIndex, map[int]*diode.VLAN{10: v10, 20: v20}, slog.Default())
+
+	assert.Equal(t, 1, n)
+	assert.Equal(t, "access", *svi.Mode)
+	assert.Same(t, v10, svi.UntaggedVlan)
+	assert.Equal(t, "tagged", *trunk.Mode, "a mode from membership tables wins")
+	assert.Nil(t, trunk.UntaggedVlan)
+	assert.Nil(t, routed.Mode)
+	assert.Nil(t, routed.UntaggedVlan)
+	assert.Equal(t, 0, AttachSviVlans(ifIndex, nil, slog.Default()))
+}

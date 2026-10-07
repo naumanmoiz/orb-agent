@@ -513,7 +513,7 @@ func NewConfig(mappings []config.MappingEntry, logger *slog.Logger, manufacturer
 		},
 		"interface": interfaceMapper,
 		"device": &DeviceMapper{
-			logger:        logger,
+			logger:          logger,
 			manufacturers:   manufacturers,
 			deviceLookup:    deviceLookup,
 			skipDescription: !options.DeviceDescriptionEnabled(),
@@ -1868,8 +1868,8 @@ func (m *Config) VendorObjectIDs(vendor string) map[string]int {
 //   - chassis_asset: entPhysicalAssetID consumed exclusively by the
 //     TranslateAsStack asset-tag post-pass.
 //   - vtp_vlan: the CISCO-VTP-MIB VLAN catalog, walked only to corroborate
-//     SVI-derived prefix VLANs. Gated on emit_prefix_vlan AND on prefix
-//     emission: with no prefixes there is nothing to associate, so the walk
+//     SVI VLANs. Walked when emit_svi_vlan is on, or else gated on
+//     emit_prefix_vlan AND on prefix emission: with no prefixes there is nothing to associate, so the walk
 //     could only change the VLAN inventory. emitVLANs reads these rows for
 //     VLAN names, so walking them when the association cannot happen would let
 //     an inert option alter a target's emitted VLANs. With either off the table
@@ -1880,7 +1880,8 @@ func (m *Config) skippedWalkEntities() map[string]bool {
 		string(ChassisModuleEntityType): m.options.ModuleDiscoveryMode() == config.DiscoverModulesOff,
 		string(VrfEntityType):           !m.options.VrfDiscoveryEnabled(),
 		string(ChassisAssetEntityType):  !m.options.AssetTagDiscoveryEnabled(),
-		string(VtpVlanEntityType):       m.options.PrefixVlanMode() == "off" || !m.options.PrefixEmissionEnabled(),
+		string(VtpVlanEntityType): !m.options.SviVlanEnabled() &&
+			(m.options.PrefixVlanMode() == "off" || !m.options.PrefixEmissionEnabled()),
 	}
 }
 

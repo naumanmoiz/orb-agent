@@ -198,6 +198,12 @@ func newInterfaceStub(iface *diode.Interface, deviceStub *diode.Device) *diode.I
 		Mtu:               iface.Mtu,
 		Enabled:           iface.Enabled,
 		PrimaryMacAddress: newMACMatchStub(iface.PrimaryMacAddress),
+		// Mode and UntaggedVlan reach an IP-bearing interface only through
+		// this stub, so they are carried like the plain attributes above.
+		// They are set on such interfaces by emit_svi_vlan (an SVI carries
+		// its subnet's gateway address); routed ports leave both nil.
+		Mode:         iface.Mode,
+		UntaggedVlan: iface.UntaggedVlan,
 	}
 }
 

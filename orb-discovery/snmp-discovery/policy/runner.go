@@ -775,8 +775,11 @@ func (r *Runner) queryTarget(ctx context.Context, target config.Target) ([]diode
 	// references VLANs the device itself named. Gated on the option so a
 	// target pays nothing (no ifName/ifDescr rescan) when it's off.
 	var sviVlanByIfIndex map[int]*diode.VLAN
-	if r.config.Options.PrefixVlanMode() != "off" {
+	if r.config.Options.PrefixVlanMode() != "off" || r.config.Options.SviVlanEnabled() {
 		sviVlanByIfIndex = mapping.ResolveSviVlans(oids, entitiesForTarget, r.logger)
+	}
+	if r.config.Options.SviVlanEnabled() {
+		mapping.AttachSviVlans(ifIndexByIface, sviVlanByIfIndex, r.logger)
 	}
 
 	// Prefix derivation (default on, opt-out via emit_prefixes: false):
