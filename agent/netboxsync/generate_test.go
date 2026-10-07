@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -406,8 +405,9 @@ func TestNewSettingsSNMPTimeouts(t *testing.T) {
 	}
 }
 
-// A company-sized NetBox: 5000 prefixes over 10 VRFs, nested three deep.
-func TestGeneratePerformance(t *testing.T) {
+// companyPrefixes is a company-sized NetBox: 5000 prefixes over 10 VRFs,
+// nested three deep.
+func companyPrefixes() []*Prefix {
 	var ps []*Prefix
 	id := 1
 	for v := 1; v <= 10; v++ {
@@ -426,23 +426,42 @@ func TestGeneratePerformance(t *testing.T) {
 			}
 		}
 	}
+	return ps
+}
+
+// Speed is measured by BenchmarkGenerate rather than asserted here: a
+// wall-clock bound fails under -race and on loaded CI runners.
+func TestGenerateCompanySized(t *testing.T) {
+	ps := companyPrefixes()
 	require.GreaterOrEqual(t, len(ps), 5000)
 	cfg := baseConfig()
 	cfg.SNMPDiscovery.Enabled = true
 	s := mustSettings(t, cfg)
 
-	start := time.Now()
 	res := Generate(ps, s)
 	out, err := Render(res)
-	elapsed := time.Since(start)
 	require.NoError(t, err)
-	t.Logf("%d prefixes -> %d scan, %d straggler, %d snmp policies, %d bytes in %s",
-		len(ps), res.Summary.ScanPolicies, res.Summary.StragglerPolicies, res.Summary.SNMPPolicies, len(out), elapsed)
-	assert.Less(t, elapsed, 2*time.Second)
+	t.Logf("%d prefixes -> %d scan, %d straggler, %d snmp policies, %d bytes",
+		len(ps), res.Summary.ScanPolicies, res.Summary.StragglerPolicies, res.Summary.SNMPPolicies, len(out))
 	assert.Equal(t, 4800, res.Summary.ScanPrefixes)
 	assert.Equal(t, 20, res.Summary.ScanPolicies, "4800 /120 leaves at 256 addresses each, 256 per policy by hosts")
 	assert.Less(t, res.Summary.ScanPolicies+res.Summary.StragglerPolicies+res.Summary.SNMPPolicies, 300,
 		"thousands of prefixes become a bounded number of policies")
+}
+
+// go test -run '^$' -bench BenchmarkGenerate ./agent/netboxsync/
+func BenchmarkGenerate(b *testing.B) {
+	cfg := baseConfig()
+	cfg.SNMPDiscovery.Enabled = true
+	s, err := NewSettings(cfg)
+	require.NoError(b, err)
+	ps := companyPrefixes()
+	b.ResetTimer()
+	for b.Loop() {
+		if _, err := Render(Generate(ps, s)); err != nil {
+			b.Fatal(err)
+		}
+	}
 }
 
 func TestRenderAndWriteAtomic(t *testing.T) {
