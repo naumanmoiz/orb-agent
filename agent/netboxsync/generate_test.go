@@ -322,7 +322,7 @@ func TestGenerateSNMP(t *testing.T) {
 		Enabled:        true,
 		Authentication: map[string]any{"protocol_version": "SNMPv2c", "community": "${SNMP_COMMUNITY}"},
 		Config: map[string]any{
-			"timeout":  5,
+			"timeout":  300,
 			"defaults": map[string]any{"ip_address": map[string]any{"vrf": "X", "description": "kept"}},
 		},
 	}
@@ -375,6 +375,35 @@ func TestNewSettingsStragglerSchedule(t *testing.T) {
 
 	_, err = NewSettings(config.NetBoxManager{})
 	require.Error(t, err, "nothing enabled")
+}
+
+// snmp-discovery refuses a policy whose timeout is not above snmp_timeout.
+func TestNewSettingsSNMPTimeouts(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  map[string]any
+		ok   bool
+	}{
+		{"defaults", nil, true},
+		{"timeout equal to default snmp_timeout", map[string]any{"timeout": 5}, false},
+		{"timeout below snmp_timeout", map[string]any{"timeout": 60, "snmp_timeout": 90}, false},
+		{"timeout above snmp_timeout", map[string]any{"timeout": 300, "snmp_timeout": 10}, true},
+		{"float from json", map[string]any{"timeout": 300.0}, true},
+		{"not a number", map[string]any{"timeout": "5m"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := baseConfig()
+			cfg.SNMPDiscovery.Enabled = true
+			cfg.SNMPDiscovery.Config = tc.cfg
+			_, err := NewSettings(cfg)
+			if tc.ok {
+				require.NoError(t, err)
+			} else {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "snmp_discovery.config.timeout")
+			}
+		})
+	}
 }
 
 // A company-sized NetBox: 5000 prefixes over 10 VRFs, nested three deep.

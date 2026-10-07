@@ -52,7 +52,8 @@ orb:
             protocol_version: SNMPv2c
             community: ${SNMP_COMMUNITY}
           config:
-            timeout: 5
+            timeout: 300      # per-device walk budget (s); must exceed snmp_timeout
+            snmp_timeout: 10
   backends:
     common:
       diode:

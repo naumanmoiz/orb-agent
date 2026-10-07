@@ -159,7 +159,8 @@ orb:
           # options.interface_description_from_ifalias default to false here,
           # so hand-written descriptions are kept; set true to overwrite them.
           config:
-            timeout: 5
+            timeout: 300      # per-device walk budget (s); must exceed snmp_timeout
+            snmp_timeout: 10
             options:
               emit_prefixes: false
 

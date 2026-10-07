@@ -95,6 +95,55 @@ func positiveOr(v, def int) int {
 	return v
 }
 
+// snmp-discovery's defaults for config.timeout and config.snmp_timeout, in
+// seconds. It rejects a policy whose timeout is not above its snmp_timeout.
+const (
+	snmpDefaultTimeout     = 120
+	snmpDefaultSNMPTimeout = 5
+)
+
+// checkSNMPTimeouts rejects a config.timeout that snmp-discovery would refuse,
+// so the mistake surfaces in netbox-render instead of as a failed policy.
+// config.timeout bounds one device's whole walk, not one SNMP request.
+func checkSNMPTimeouts(cfg map[string]any) error {
+	seconds := func(key string, def int) (int, error) {
+		v, ok := cfg[key]
+		if !ok || v == nil {
+			return def, nil
+		}
+		switch n := v.(type) {
+		case int:
+			return n, nil
+		case int64:
+			return int(n), nil
+		case uint64:
+			return int(n), nil
+		case float64:
+			return int(n), nil
+		}
+		return 0, fmt.Errorf("snmp_discovery.config.%s must be a number of seconds, got %v", key, v)
+	}
+	timeout, err := seconds("timeout", snmpDefaultTimeout)
+	if err != nil {
+		return err
+	}
+	snmpTimeout, err := seconds("snmp_timeout", snmpDefaultSNMPTimeout)
+	if err != nil {
+		return err
+	}
+	if timeout <= 0 {
+		timeout = snmpDefaultTimeout
+	}
+	if snmpTimeout <= 0 {
+		snmpTimeout = snmpDefaultSNMPTimeout
+	}
+	if timeout <= snmpTimeout {
+		return fmt.Errorf("snmp_discovery.config.timeout (%ds) must be greater than snmp_timeout (%ds); "+
+			"timeout bounds a whole device walk, so use minutes (default %d)", timeout, snmpTimeout, snmpDefaultTimeout)
+	}
+	return nil
+}
+
 // NewSettings validates cfg and applies the defaults.
 func NewSettings(cfg config.NetBoxManager) (Settings, error) {
 	s := Settings{Statuses: map[string]bool{}}
@@ -158,6 +207,11 @@ func NewSettings(cfg config.NetBoxManager) (Settings, error) {
 	}
 	if s.SNMP.Schedule == "" {
 		s.SNMP.Schedule = "15 */6 * * *"
+	}
+	if s.SNMP.Enabled {
+		if err := checkSNMPTimeouts(s.SNMP.Config); err != nil {
+			return Settings{}, err
+		}
 	}
 	if !s.ND.Enabled && !s.SNMP.Enabled {
 		return Settings{}, fmt.Errorf("netbox source: neither network_discovery nor snmp_discovery is enabled")
@@ -366,8 +420,10 @@ func Generate(prefixes []*Prefix, s Settings) *Result {
 			isParent := len(p.Children) > 0 || p.Status == statusContainer
 			if !isParent {
 				if tooLarge(p.Network, s.ND.MinBitsV4, s.ND.MinBitsV6) {
-					res.Summary.Skipped = append(res.Summary.Skipped, Skip{p.ID, p.Network.String(), p.VRF,
-						"leaf prefix larger than max_block_prefix_len"})
+					res.Summary.Skipped = append(res.Summary.Skipped, Skip{
+						p.ID, p.Network.String(), p.VRF,
+						"leaf prefix larger than max_block_prefix_len",
+					})
 					continue
 				}
 				leaves = append(leaves, item{p.Network, p})
@@ -388,14 +444,18 @@ func Generate(prefixes []*Prefix, s Settings) *Result {
 			var used uint64
 			for _, b := range left {
 				if tooLarge(b, s.ND.StragglerMinBitsV4, s.ND.StragglerMinBitsV6) {
-					res.Summary.Skipped = append(res.Summary.Skipped, Skip{p.ID, b.String(), p.VRF,
-						"leftover block larger than straggler.max_block_prefix_len"})
+					res.Summary.Skipped = append(res.Summary.Skipped, Skip{
+						p.ID, b.String(), p.VRF,
+						"leftover block larger than straggler.max_block_prefix_len",
+					})
 					continue
 				}
 				h := hostCount(b)
 				if used+h > s.ND.StragglerMaxPerPar {
-					res.Summary.Skipped = append(res.Summary.Skipped, Skip{p.ID, b.String(), p.VRF,
-						"parent exceeded straggler.max_hosts_per_parent"})
+					res.Summary.Skipped = append(res.Summary.Skipped, Skip{
+						p.ID, b.String(), p.VRF,
+						"parent exceeded straggler.max_hosts_per_parent",
+					})
 					continue
 				}
 				used += h
